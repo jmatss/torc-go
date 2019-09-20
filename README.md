@@ -1,2 +1,1 @@
-# torc
-A simple BitTorrent client
+A simple BitTorrent client (work in progress).
