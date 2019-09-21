@@ -270,15 +270,7 @@ func getPeers(body []byte) ([]Peer, error) {
 					"from string into int using the dictionary model")
 			}
 
-			// Can parse either IPv4 or IPv6.
-			// If it isn't a valid IP address it returns nil.
-			// Assumes a invalid IP address is a hostname.
-			ip := net.ParseIP(ipString)
-			if ip == nil {
-				peers = append(peers, NewPeerHostname(ipString, port))
-			} else {
-				peers = append(peers, NewPeerIp(ip, port))
-			}
+			peers = append(peers, NewPeer(ipString, port))
 		}
 
 	} else {
