@@ -24,15 +24,15 @@ var (
 )
 
 type Peer struct {
-	UsingIp  bool // bool to indicate if this peer is using Ip or Hostname
+	UsingIp  bool
 	Ip       net.IP
 	Hostname string
 	Port     int64
 
-	AmChoking     bool // this client is 	choking remote peer
-	AmIntrested   bool // 		 -||-		interested in remote peer
-	PeerChoking   bool // remote peer is	choking this client
-	PeerIntrested bool //		 -||-		interested in this client
+	AmChoking     bool
+	AmIntrested   bool
+	PeerChoking   bool
+	PeerIntrested bool
 }
 
 func NewPeerIp(ip net.IP, port int64) Peer {
@@ -73,8 +73,6 @@ func (p *Peer) PeerHandler() {
 // ! The callee is in charge of closing the returned connection, even when
 //  a error is returned !
 func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, error) {
-	// Remote will be in the form:
-	// "<IPv4/HOSTNAME>:<PORT>" or "[<IPv6>]:<PORT>"
 	var remote string
 	port := strconv.Itoa(int(p.Port))
 
