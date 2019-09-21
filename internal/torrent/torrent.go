@@ -64,7 +64,7 @@ func NewTorrent(filename string) (*Torrent, error) {
 	torrent.Info.Files = files
 
 	file.Seek(0, 0)
-	err = newTracker(torrent, file)
+	err = NewTracker(torrent, file)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create tracker for torrent: %w", err)
 	}

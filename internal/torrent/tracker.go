@@ -56,7 +56,7 @@ type Tracker struct {
 
 // Creates a new tracker struct that will contain anything tracker related
 // including all peers.
-func newTracker(torrent *Torrent, file *os.File) error {
+func NewTracker(torrent *Torrent, file *os.File) error {
 	tracker := Tracker{}
 
 	content, err := ioutil.ReadAll(file)
@@ -194,7 +194,7 @@ func (t *Torrent) TrackerRequest(peerId string, event EventId) error {
 }
 
 /*
-	Tracker Response dictionary model:
+	Tracker Error dictionary model:
 		d
 			14:failure reason <num>:<string>
 			8:interval i<num>e
@@ -209,7 +209,7 @@ func (t *Torrent) TrackerRequest(peerId string, event EventId) error {
 			e
 		e
 
-	Tracker Response binary model:
+	Tracker Error binary model:
 		d
 			14:failure reason <num>:<string>
 			8:interval i<num>e
