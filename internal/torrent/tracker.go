@@ -27,6 +27,17 @@ const (
 	UserAgent = "torc/1.0"
 )
 
+type EventId int
+
+func (id EventId) String() string {
+	return []string{
+		"Interval",
+		"Started",
+		"Stopped",
+		"Completed",
+	}[id]
+}
+
 type Tracker struct {
 	InfoHash   [sha1.Size]byte
 	Uploaded   int64
@@ -103,7 +114,7 @@ func (t *Torrent) Stop(peerId string, completed bool) error {
 	}
 }
 
-func (t *Torrent) TrackerRequest(peerId string, event int) error {
+func (t *Torrent) TrackerRequest(peerId string, event EventId) error {
 	params := url.Values{}
 	params.Add("info_hash", string(t.Tracker.InfoHash[:]))
 	params.Add("peer_id", peerId)
@@ -116,16 +127,16 @@ func (t *Torrent) TrackerRequest(peerId string, event int) error {
 
 	switch event {
 	case Interval:
-	// Should be set during regular "interval" calls to the tracker
-	// , no need to set the "event" flag
-	case Started: // Should be set at the first request done to the tracker
-		params.Add("event", "started")
-		t.Tracker.Started = true
-	case Stopped: // Should be set when one wants to stop without being complete
-		params.Add("event", "stopped")
-	case Completed: // Should be set when one has completed the download
-		params.Add("event", "completed")
-		t.Tracker.Completed = true
+		// Should be set during regular "interval" calls to the tracker
+		// , no need to set the "event" flag
+	case Started, Stopped, Completed:
+		if event == Started {
+			t.Tracker.Started = true
+		} else if event == Completed {
+			t.Tracker.Completed = true
+		}
+
+		params.Add("event", strings.ToLower(event.String()))
 	default:
 		return fmt.Errorf("incorrect \"event\" set during tracker request")
 	}
