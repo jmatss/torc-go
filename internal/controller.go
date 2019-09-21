@@ -1,10 +1,10 @@
-package client
+package internal
 
 import (
 	"crypto/sha1"
 	"fmt"
 
-	"github.com/jmatss/torc/internal/client/torrent"
+	"github.com/jmatss/torc/internal/torrent"
 )
 
 const (
@@ -12,7 +12,7 @@ const (
 )
 
 const (
-	// Sent from "client" to "handler"
+	// Sent from "client" to "controller"
 	// Also used to send responses
 	Add ComId = iota
 	Delete
@@ -21,7 +21,7 @@ const (
 )
 
 const (
-	// Sent from "handler" to "client", starts at index 20
+	// Sent from "controller" to "client", starts at index 20
 	// Also used to send responses
 	Complete     ComId = iota + 20
 	NoConnection       // "no internet connection"
@@ -53,7 +53,7 @@ type ComMessage struct {
 	Id      ComId
 	Message string
 
-	// Used to specify which torrent(s) this ComMessage is
+	// InfoHash specifies which torrent(s) this ComMessage is
 	// meant for. If nil/empty, assume all torrents.
 	InfoHash [][sha1.Size]byte
 	Torrent  *torrent.Torrent // used when a new torrent is added
@@ -63,7 +63,7 @@ type ComMessage struct {
 	Response error
 }
 
-func Handler(torrents map[string]*torrent.Torrent, recv chan ComMessage, send chan ComMessage) {
+func Controller(torrents map[string]*torrent.Torrent, recv chan ComMessage, send chan ComMessage) {
 	handlers := make([]chan ComMessage, len(torrents))
 	for i := range handlers {
 		handlers[i] = make(chan ComMessage, ChanSize)

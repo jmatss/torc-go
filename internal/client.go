@@ -1,4 +1,4 @@
-package client
+package internal
 
 import (
 	"log"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jmatss/torc/internal/client/torrent"
+	"github.com/jmatss/torc/internal/torrent"
 )
 
 type Client struct {

@@ -2,9 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/jmatss/torc/internal"
 	"os"
-
-	"github.com/jmatss/torc/internal/client"
 )
 
 func main() {
@@ -14,5 +13,5 @@ func main() {
 		os.Exit(0)
 	}
 
-	client.Run(args[1])
+	internal.Run(args[1])
 }
