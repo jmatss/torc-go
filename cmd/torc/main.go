@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"os"
 
 	"github.com/jmatss/torc/internal/client"
@@ -10,7 +10,7 @@ import (
 func main() {
 	args := os.Args
 	if len(args) != 2 {
-		log.Printf("Enter torrent file as argument")
+		fmt.Fprintf(os.Stderr, "Enter torr toent file as argument")
 		os.Exit(0)
 	}
 

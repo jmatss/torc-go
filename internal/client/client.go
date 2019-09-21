@@ -17,8 +17,7 @@ func newClient() Client {
 	// Generate peer id. Format: -<client id(2 bytes)><version(4 bytes)>-<12 random ascii numbers>
 	// use: client id 'UT'(µTorrent) and random version for anonymity
 	peerId := make([]byte, 20)
-	peerId[0:3] = []byte("-UT")
-	peerId[7] = '-'
+	peerId[0], peerId[1], peerId[2], peerId[7] = '-', 'U', 'T', '-'
 
 	rand.Seed(time.Now().UTC().UnixNano())
 	for i := 3; i < len(peerId); i++ {
