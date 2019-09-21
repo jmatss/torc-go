@@ -10,9 +10,9 @@ import (
 func main() {
 	args := os.Args
 	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "Enter torr toent file as argument")
+		fmt.Fprintf(os.Stderr, "Enter torrent file as argument")
 		os.Exit(0)
 	}
 
-	client.Start(args[1])
+	client.Run(args[1])
 }

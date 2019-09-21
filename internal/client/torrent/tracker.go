@@ -323,7 +323,7 @@ func getPeers(body []byte) ([]Peer, error) {
 				portBytes := peersValue[currentIndex+(i*groupLen+4) : currentIndex+(i*groupLen+6)]
 				port := int64(binary.BigEndian.Uint16(portBytes))
 
-				peers = append(peers, NewPeerIp(ip, port))
+				peers = append(peers, NewPeer(ip.String(), port))
 			}
 
 		} else {

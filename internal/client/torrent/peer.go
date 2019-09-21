@@ -95,17 +95,6 @@ func NewPeer(ipString string, port int64) Peer {
 	return peer
 }
 
-func (p *Peer) PeerHandler(peerId string, infoHash [sha1.Size]byte, peerChannel chan error) {
-	conn, err := p.Handshake(peerId, infoHash)
-	defer conn.Close() // must close even if error
-	if err != nil {
-
-	}
-	p.Connection = conn
-
-	// TODO: will be in charge of all communication between this client and the peer
-}
-
 // TODO: make sure to do "os.IsTimeout" on the returned error to see if it as timeout
 // https://wiki.theory.org/index.php/BitTorrentSpecification#Handshake
 // Initiates a handshake with the peer.
@@ -195,8 +184,8 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 	See https://wiki.theory.org/index.php/BitTorrentSpecification#Messages
 */
 
-// Packet format: <length prefix><message ID><payload>
 // Sends a message to this peer.
+// Packet format: <length prefix><message ID><payload>
 //
 // This function can send:
 // KeepAlive, Choke, UnChoke, Interested, NotInterested, Have,
@@ -223,9 +212,9 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 	case Have:
 		// Format: <lenPrefix=0005><id=4><piece index>
 		if len(input) != 1 {
-			return fmt.Errorf("unable to send \"Have\" message: "+
+			return fmt.Errorf("unable to send \"%s\" message: "+
 				"incorrect amount of arguments to send function, "+
-				"expected: 1, got: %d", len(input))
+				"expected: 1, got: %d", messageId.String(), len(input))
 		}
 
 		lenPrefix := 5
@@ -234,7 +223,7 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
 		binary.BigEndian.PutUint32(data[5:], uint32(input[0]))
 	case Request, Cancel:
-		// Format: 	<lenPrefix=0013><id=X><index(4B)><begin(4B)><length(4B)>
+		// Format: 	<lenPrefix=000(13)><id=X><index(4B)><begin(4B)><length(4B)>
 		if len(input) != 3 {
 			return fmt.Errorf("unable to send \"%s\" message: "+
 				"incorrect amount of arguments to send function, "+
@@ -248,6 +237,8 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		binary.BigEndian.PutUint32(data[5:9], uint32(input[0]))  // index
 		binary.BigEndian.PutUint32(data[9:13], uint32(input[1])) // begin
 		binary.BigEndian.PutUint32(data[13:], uint32(input[2]))  // length
+	default:
+		return fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
 
 	n, err := p.Connection.Write(data)

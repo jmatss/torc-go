@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jmatss/torc/internal/torrent"
+	"github.com/jmatss/torc/internal/client/torrent"
 )
 
 type Client struct {
@@ -34,7 +34,7 @@ func newClient() Client {
 	}
 }
 
-func Start(torrentFile string) {
+func Run(torrentFile string) {
 	client := newClient()
 
 	filename := filepath.FromSlash(torrentFile)
