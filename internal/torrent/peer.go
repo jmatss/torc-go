@@ -15,7 +15,38 @@ const (
 	Protocol   = "tcp"
 	Timeout    = 5 * time.Second
 	BufferSize = 1 << 16
+
+	// The KeepAlive message doesn't have an id,
+	//  set to -1 so that it still can be distinguished.
+	KeepAlive MessageId = iota - 1
+	Choke
+	UnChoke
+	Interested
+	NotInterested
+	Have
+	Bitfield
+	Request
+	_ // Piece, not used
+	Cancel
 )
+
+type MessageId int
+
+func (id MessageId) String() string {
+	// enum indexing starts at "-1", need to increment with 1.
+	return []string{
+		"KeepAlive",
+		"Choke",
+		"UnChoke",
+		"Interested",
+		"NotInterested",
+		"Have",
+		"Bitfield",
+		"Request",
+		"Piece",
+		"Cancel",
+	}[id+1]
+}
 
 var (
 	PStr     = []byte("BitTorrent protocol")
@@ -340,4 +371,8 @@ func (p *Peer) CancelRequest(conn net.Conn, index, begin, length int) error {
 	}
 
 	return nil
+}
+
+func (p *Peer) Send(conn net.Conn) {
+
 }
