@@ -30,6 +30,12 @@ const (
 	Cancel
 )
 
+var (
+	PStr     = []byte("BitTorrent protocol")
+	PStrLen  = len(PStr)
+	Reserved = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+)
+
 type MessageId int
 
 func (id MessageId) String() string {
@@ -48,17 +54,14 @@ func (id MessageId) String() string {
 	}[id+1]
 }
 
-var (
-	PStr     = []byte("BitTorrent protocol")
-	PStrLen  = len(PStr)
-	Reserved = []byte{0, 0, 0, 0, 0, 0, 0, 0}
-)
-
 type Peer struct {
 	UsingIp  bool
 	Ip       net.IP
 	Hostname string
 	Port     int64
+
+	Connection     net.Conn
+	RemoteBitField []byte
 
 	AmChoking     bool
 	AmIntrested   bool
@@ -66,18 +69,10 @@ type Peer struct {
 	PeerIntrested bool
 }
 
-func NewPeerIp(ip net.IP, port int64) Peer {
-	return newPeer(true, ip, "", port)
-}
-
-func NewPeerHostname(hostname string, port int64) Peer {
-	return newPeer(false, nil, hostname, port)
-}
-
-func newPeer(usingIp bool, ip net.IP, hostname string, port int64) Peer {
+// Parameter ipString can be either IPv4, IPv6 or a hostname.
+func NewPeer(ipString string, port int64) Peer {
 	peer := Peer{
-		UsingIp: usingIp,
-		Port:    port,
+		Port: port,
 
 		AmChoking:     true,
 		AmIntrested:   false,
@@ -85,16 +80,29 @@ func newPeer(usingIp bool, ip net.IP, hostname string, port int64) Peer {
 		PeerIntrested: false,
 	}
 
-	if usingIp {
-		peer.Ip = ip
+	// Can parse either IPv4 or IPv6.
+	// If it isn't a valid IP address it returns nil.
+	// Assumes a invalid IP address is a hostname.
+	ip := net.ParseIP(ipString)
+	if ip == nil {
+		peer.UsingIp = false
+		peer.Hostname = ipString
 	} else {
-		peer.Hostname = hostname
+		peer.UsingIp = true
+		peer.Ip = ip
 	}
 
 	return peer
 }
 
-func (p *Peer) PeerHandler() {
+func (p *Peer) PeerHandler(peerId string, infoHash [sha1.Size]byte, peerChannel chan error) {
+	conn, err := p.Handshake(peerId, infoHash)
+	defer conn.Close() // must close even if error
+	if err != nil {
+
+	}
+	p.Connection = conn
+
 	// TODO: will be in charge of all communication between this client and the peer
 }
 
@@ -110,7 +118,7 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 	if p.UsingIp {
 		ip := p.Ip.String()
 		if strings.Contains(ip, ":") {
-			// IPv6, need to wrap ip inside square brackets
+			// Assume IP containing colon is IPv6, need to wrap inside square brackets
 			ip = "[" + ip + "]"
 		}
 
@@ -182,121 +190,72 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 }
 
 /*
-	All other protocols follow format(excluding "handshake"): <length prefix><message ID><payload>
+	All protocols except "handshake" follows format: <length prefix><message ID><payload>
 	Where <length prefix> is 4 bytes, <message ID> is 1 byte and <payload> is variable length.
 	See https://wiki.theory.org/index.php/BitTorrentSpecification#Messages
 */
 
-// Sends a keep alive message to make sure that the other party knows that this
-// client is still alive and running.
-// Format: <lenPrefix=0000>
-func (p *Peer) KeepAlive(conn net.Conn) error {
-	// TODO: send every ~2 min
-	data := []byte{0, 0, 0, 0}
-	n, err := conn.Write(data)
-	if err != nil {
-		return err
-	} else if n != len(data) {
-		return fmt.Errorf("unable to send keep alive message to remote %s",
-			conn.RemoteAddr().String())
+// Packet format: <length prefix><message ID><payload>
+// Sends a message to this peer.
+//
+// This function can send:
+// KeepAlive, Choke, UnChoke, Interested, NotInterested, Have,
+// Request and Cancel messages.
+//
+// It can not send:
+// Bitfield or Piece messages
+//
+// Format of variadic int "input":
+// - KeepAlive, Choke, UnChoke, Interested, NotInterested: Not used
+// - Have: (<piece index>)
+// - Request, Cancel: (<index>, <begin>, <length>)
+func (p *Peer) Send(messageId MessageId, input ...int) error {
+	var data []byte
+	id := byte(messageId)
+
+	switch messageId {
+	case KeepAlive:
+		// Format: <lenPrefix=0000>
+		data = []byte{0, 0, 0, 0}
+	case Choke, UnChoke, Interested, NotInterested:
+		// Format: <lenPrefix=0001><id=X>
+		data = []byte{0, 0, 0, 1, id}
+	case Have:
+		// Format: <lenPrefix=0005><id=4><piece index>
+		if len(input) != 1 {
+			return fmt.Errorf("unable to send \"Have\" message: "+
+				"incorrect amount of arguments to send function, "+
+				"expected: 1, got: %d", len(input))
+		}
+
+		lenPrefix := 5
+		data = make([]byte, 4+lenPrefix)
+
+		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
+		binary.BigEndian.PutUint32(data[5:], uint32(input[0]))
+	case Request, Cancel:
+		// Format: 	<lenPrefix=0013><id=X><index(4B)><begin(4B)><length(4B)>
+		if len(input) != 3 {
+			return fmt.Errorf("unable to send \"%s\" message: "+
+				"incorrect amount of arguments to send function, "+
+				"expected : 3, got: %d", messageId.String(), len(input))
+		}
+
+		lenPrefix := 13
+		data := make([]byte, 4+lenPrefix)
+
+		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
+		binary.BigEndian.PutUint32(data[5:9], uint32(input[0]))  // index
+		binary.BigEndian.PutUint32(data[9:13], uint32(input[1])) // begin
+		binary.BigEndian.PutUint32(data[13:], uint32(input[2]))  // length
 	}
 
-	return nil
-}
-
-// TODO: might be able to merge Choke and Unchoke into one function
-//  and see if it needs to be choked/unchoked in the boolean already
-//  contained in the Peer struct. Same thing with interested/not interested.
-// Sends a choke message to the remote host.
-// Format: <lenPrefix=0001><id=0>
-func (p *Peer) Choke(conn net.Conn) error {
-	lenPrefix := 1
-	id := byte(0)
-	data := []byte{0, 0, 0, byte(lenPrefix), id}
-
-	n, err := conn.Write(data)
+	n, err := p.Connection.Write(data)
 	if err != nil {
 		return err
 	} else if n != len(data) {
-		return fmt.Errorf("unable to send choke message to remote %s",
-			conn.RemoteAddr().String())
-	}
-
-	return nil
-}
-
-// Sends a unchoke message to the remote host.
-// Format: <lenPrefix=0001><id=1>
-func (p *Peer) UnChoke(conn net.Conn) error {
-	lenPrefix := 1
-	id := byte(1)
-	data := []byte{0, 0, 0, byte(lenPrefix), id}
-
-	n, err := conn.Write(data)
-	if err != nil {
-		return err
-	} else if n != len(data) {
-		return fmt.Errorf("unable to send unchoke message to remote %s",
-			conn.RemoteAddr().String())
-	}
-
-	return nil
-}
-
-// Sends a interested message to the remote host.
-// Format: <lenPrefix=0001><id=2>
-func (p *Peer) Interested(conn net.Conn) error {
-	lenPrefix := 1
-	id := byte(2)
-	data := []byte{0, 0, 0, byte(lenPrefix), id}
-
-	n, err := conn.Write(data)
-	if err != nil {
-		return err
-	} else if n != len(data) {
-		return fmt.Errorf("unable to send interested message to remote %s",
-			conn.RemoteAddr().String())
-	}
-
-	return nil
-}
-
-// Sends a not interested message to the remote host.
-// Format: <lenPrefix=0001><id=3>
-func (p *Peer) NotInterested(conn net.Conn) error {
-	lenPrefix := 1
-	id := byte(3)
-	data := []byte{0, 0, 0, byte(lenPrefix), id}
-
-	n, err := conn.Write(data)
-	if err != nil {
-		return err
-	} else if n != len(data) {
-		return fmt.Errorf("unable to send not interested message to remote %s",
-			conn.RemoteAddr().String())
-	}
-
-	return nil
-}
-
-// Sends a have message to the remote host.
-// Sent to indicate that this client have acquired a new piece
-// and it is available to download for other peers.
-// Format: <lenPrefix=0005><id=4><piece index>
-func (p *Peer) Have(conn net.Conn, pieceIndex int) error {
-	lenPrefix := 5
-	id := byte(4)
-	data := make([]byte, 4+lenPrefix)
-
-	copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
-	binary.BigEndian.PutUint32(data[5:], uint32(pieceIndex))
-
-	n, err := conn.Write(data)
-	if err != nil {
-		return err
-	} else if n != len(data) {
-		return fmt.Errorf("unable to send have message to remote %s",
-			conn.RemoteAddr().String())
+		return fmt.Errorf("unable to send \"%s\" message to remote host %s",
+			messageId.String(), p.Connection.RemoteAddr().String())
 	}
 
 	return nil
@@ -304,9 +263,10 @@ func (p *Peer) Have(conn net.Conn, pieceIndex int) error {
 
 // Sends a bitfield message to the remote host.
 // Optionally sent to remote host after handshake to indicate
-// which pieces this client has.
+// which pieces this client has. No need to send if this client
+// doesn't have any pieces.
 // Format: <lenPrefix=0001+len(bitfield)><id=5><bitfield>
-func (p *Peer) Bitfield(conn net.Conn, bitField []byte) error {
+func (p *Peer) SendBitfield(bitField []byte) error {
 	lenPrefix := 1 + len(bitField)
 	id := byte(5)
 	data := make([]byte, 0, 4+lenPrefix)
@@ -314,65 +274,13 @@ func (p *Peer) Bitfield(conn net.Conn, bitField []byte) error {
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
 	data = append(data, bitField...)
 
-	n, err := conn.Write(data)
+	n, err := p.Connection.Write(data)
 	if err != nil {
 		return err
 	} else if n != len(data) {
-		return fmt.Errorf("unable to send bitfield message to remote %s",
-			conn.RemoteAddr().String())
+		return fmt.Errorf("unable to send %s message to remote %s",
+			Bitfield.String(), p.Connection.RemoteAddr().String())
 	}
 
 	return nil
-}
-
-// Sends a request message to the remote host.
-// Used to request specific pieces from the remote host.
-// Format: <lenPrefix=0013><id=6><index(4B)><begin(4B)><length(4B)>
-func (p *Peer) Request(conn net.Conn, index, begin, length int) error {
-	lenPrefix := 13
-	id := byte(6)
-	data := make([]byte, 4+lenPrefix)
-
-	copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
-	binary.BigEndian.PutUint32(data[5:9], uint32(index))
-	binary.BigEndian.PutUint32(data[9:13], uint32(begin))
-	binary.BigEndian.PutUint32(data[13:], uint32(length))
-
-	n, err := conn.Write(data)
-	if err != nil {
-		return err
-	} else if n != len(data) {
-		return fmt.Errorf("unable to send request message to remote %s",
-			conn.RemoteAddr().String())
-	}
-
-	return nil
-}
-
-// Sends a cancel message to the remote host.
-// Used to cancel requested blocks.
-// Format: <lenPrefix=0013><id=8><index(4B)><begin(4B)><length(4B)>
-func (p *Peer) CancelRequest(conn net.Conn, index, begin, length int) error {
-	lenPrefix := 13
-	id := byte(8)
-	data := make([]byte, 4+lenPrefix)
-
-	copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
-	binary.BigEndian.PutUint32(data[5:9], uint32(index))
-	binary.BigEndian.PutUint32(data[9:13], uint32(begin))
-	binary.BigEndian.PutUint32(data[13:], uint32(length))
-
-	n, err := conn.Write(data)
-	if err != nil {
-		return err
-	} else if n != len(data) {
-		return fmt.Errorf("unable to send cancel request message to remote %s",
-			conn.RemoteAddr().String())
-	}
-
-	return nil
-}
-
-func (p *Peer) Send(conn net.Conn) {
-
 }
