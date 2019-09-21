@@ -50,7 +50,7 @@ func newPeer(usingIp bool, ip net.IP, hostname string, port int64) Peer {
 
 		AmChoking:     true,
 		AmIntrested:   false,
-		PeerChoking:   false,
+		PeerChoking:   true,
 		PeerIntrested: false,
 	}
 
@@ -94,6 +94,7 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 	// See specification link at top of function for more info
 	dataLength := 1 + PStrLen + 8 + len(infoHash) + len(peerId)
 	data := make([]byte, 0, dataLength)
+
 	data = append(data, byte(PStrLen))          // pstrlen
 	data = append(data, PStr...)                // pstr
 	data = append(data, Reserved...)            // reserved
