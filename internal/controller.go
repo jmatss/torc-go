@@ -2,20 +2,33 @@ package internal
 
 import (
 	"fmt"
+
 	"github.com/jmatss/torc/internal/torrent"
 	. "github.com/jmatss/torc/internal/util" // "oom" util
 )
 
-func Controller(torrents map[string]*torrent.Torrent, com ComChannel) {
+var (
+	PeerId string
+)
+
+func Controller(peerId string, com ComChannel) {
+	PeerId = peerId
+	// TODO: fetch torrents from disk and send to handlers when created
+	torrents := fetchTorrents()
+
+	// Spawn handlers. Every handler will be in charge of a specific torrent
+	// with the InfoHash of the torrent being used as the key in the handlers map.
 	handlers := make(map[string]ComChannel, len(torrents))
 	for _, tor := range torrents {
-		handlers[string(tor.Tracker.InfoHash[:])] = NewComChannel()
-		// TODO: go torrentHandler(handlers[string(tor.Tracker.InfoHash[:])] chan ComChannel)
+		infoHash := string(tor.Tracker.InfoHash[:])
+
+		handlers[infoHash] = NewComChannel()
+		go Handler(tor, handlers[infoHash])
 	}
 
 	var msg ComMessage
 	for {
-		msg = com.Recv()
+		msg = <-com.Recv
 
 		switch msg.Id {
 		case Add:
@@ -26,7 +39,7 @@ func Controller(torrents map[string]*torrent.Torrent, com ComChannel) {
 			}
 
 			_, ok := torrents[string(msg.Torrent.Tracker.InfoHash[:])]
-			if !ok {
+			if ok {
 				com.Respond(msg.Id, msg.InfoHash,
 					fmt.Errorf("tried to add a torrent that already exists"),
 				)
@@ -88,4 +101,9 @@ func Controller(torrents map[string]*torrent.Torrent, com ComChannel) {
 			return
 		}
 	}
+}
+
+// TODO: currently only returns empty
+func fetchTorrents() map[string]*torrent.Torrent {
+	return make(map[string]*torrent.Torrent, 0)
 }
