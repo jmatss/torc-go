@@ -63,14 +63,14 @@ type ComMessage struct {
 }
 
 type ComChannel struct {
-	send chan ComMessage
-	recv chan ComMessage
+	Send chan ComMessage
+	Recv chan ComMessage
 }
 
 func NewComChannel() ComChannel {
 	return ComChannel{
-		send: make(chan ComMessage, ChanSize),
-		recv: make(chan ComMessage, ChanSize),
+		Send: make(chan ComMessage, ChanSize),
+		Recv: make(chan ComMessage, ChanSize),
 	}
 }
 
@@ -81,9 +81,9 @@ func (cc *ComChannel) Request(id ComId, infoHash [][sha1.Size]byte, message stri
 		Message:  message,
 		InfoHash: infoHash,
 	}
-	cc.send <- cm
+	cc.Send <- cm
 
-	return <-cc.recv
+	return <-cc.Recv
 }
 
 func (cc *ComChannel) Respond(id ComId, infoHash [][sha1.Size]byte, err error) {
@@ -92,9 +92,5 @@ func (cc *ComChannel) Respond(id ComId, infoHash [][sha1.Size]byte, err error) {
 		Error:    err,
 		InfoHash: infoHash,
 	}
-	cc.send <- cm
-}
-
-func (cc *ComChannel) Recv() ComMessage {
-	return <-cc.recv
+	cc.Send <- cm
 }
