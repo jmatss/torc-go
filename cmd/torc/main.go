@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/jmatss/torc/internal"
 	"os"
+
+	"github.com/jmatss/torc/internal"
 )
 
 func main() {
