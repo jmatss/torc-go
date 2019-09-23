@@ -1,7 +1,7 @@
 // ComMessages are sent between go processes over channels to communicate with each other.
 // A ComChannel wraps channels so that ComMessages can easily be sent in both
 // directions(send and receive).
-package internal
+package util
 
 import (
 	"crypto/sha1"

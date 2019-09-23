@@ -2,8 +2,8 @@ package internal
 
 import (
 	"fmt"
-
 	"github.com/jmatss/torc/internal/torrent"
+	. "github.com/jmatss/torc/internal/util" // "oom" util
 )
 
 func Controller(torrents map[string]*torrent.Torrent, com ComChannel) {
@@ -88,8 +88,4 @@ func Controller(torrents map[string]*torrent.Torrent, com ComChannel) {
 			return
 		}
 	}
-}
-
-func torrentHandler() {
-
 }
