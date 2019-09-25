@@ -4,11 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	_ "path/filepath"
 	"strings"
-	"time"
 
 	_ "github.com/jmatss/torc/internal/torrent"
 	. "github.com/jmatss/torc/internal/util"
@@ -16,7 +14,7 @@ import (
 
 func Run(torrentFile string) {
 	com := NewComChannel()
-	go Controller(newPeerId(), com)
+	go Controller(com)
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -77,22 +75,4 @@ func Run(torrentFile string) {
 			log.Printf("ERROR: %v", err)
 		}
 	*/
-}
-
-func newPeerId() string {
-	// Generate peer id. Format: -<client id(2 bytes)><version(4 bytes)>-<12 random ascii numbers>
-	// use: client id 'UT'(µTorrent) and random version for anonymity
-	peerId := make([]byte, 20)
-	peerId[0], peerId[1], peerId[2], peerId[7] = '-', 'U', 'T', '-'
-
-	rand.Seed(time.Now().UTC().UnixNano())
-	for i := 3; i < len(peerId); i++ {
-		if i == 7 {
-			continue
-		}
-		// (ascii 48 -> 57) => (0 -> 9)
-		peerId[i] = byte(rand.Intn(10) + 48)
-	}
-
-	return string(peerId)
 }
