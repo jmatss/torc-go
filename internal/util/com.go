@@ -26,12 +26,8 @@ const (
 
 const (
 	// Sent from "handlers" up towards "client", starts at index 20
-	Success ComId = iota + 20 // general error
-	Failure
+	Failure ComId = iota + 20 // general error
 	Complete
-	NoConnection // "no internet connection"
-	DiskFull
-	PermissionDenied
 )
 
 func (id ComId) String() string {
