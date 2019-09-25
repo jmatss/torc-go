@@ -26,8 +26,10 @@ const (
 
 const (
 	// Sent from "handlers" up towards "client", starts at index 20
-	Complete     ComId = iota + 20
-	NoConnection       // "no internet connection"
+	Success ComId = iota + 20 // general error
+	Failure
+	Complete
+	NoConnection // "no internet connection"
 	DiskFull
 	PermissionDenied
 )
@@ -75,7 +77,7 @@ func NewComChannel() ComChannel {
 }
 
 // Send a request and receive a response("Respond").
-func (cc *ComChannel) Request(id ComId, infoHash [][sha1.Size]byte, message string) ComMessage {
+func (cc *ComChannel) Request(id ComId, message string, infoHash ...[sha1.Size]byte) ComMessage {
 	cm := ComMessage{
 		Id:       id,
 		Message:  message,
@@ -86,7 +88,7 @@ func (cc *ComChannel) Request(id ComId, infoHash [][sha1.Size]byte, message stri
 	return <-cc.Recv
 }
 
-func (cc *ComChannel) Respond(id ComId, infoHash [][sha1.Size]byte, err error) {
+func (cc *ComChannel) Respond(id ComId, err error, infoHash ...[sha1.Size]byte) {
 	cm := ComMessage{
 		Id:       id,
 		Error:    err,
