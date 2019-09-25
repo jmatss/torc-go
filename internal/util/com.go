@@ -71,6 +71,10 @@ func NewComChannel() ComChannel {
 	}
 }
 
+func (cc *ComChannel) Recv() ComMessage {
+	return <-cc.RecvChan
+}
+
 // Send a new message on the ComChannel.
 func (cc *ComChannel) Send(
 	id ComId,
@@ -80,11 +84,6 @@ func (cc *ComChannel) Send(
 ) {
 	cm := ComMessage{id, error, torrent, infoHash}
 	cc.SendChan <- cm
-}
-
-// Send a copy of a message on the ComChannel.
-func (cc *ComChannel) SendCopy(msg ComMessage) {
-	cc.SendChan <- msg
 }
 
 // Send a new message on the ComChannel and block and wait on a response.
@@ -98,6 +97,12 @@ func (cc *ComChannel) SendAndRecv(
 	return <-cc.RecvChan
 }
 
-func (cc *ComChannel) Recv() ComMessage {
+// Send a copy of a message on the ComChannel.
+func (cc *ComChannel) SendCopy(msg ComMessage) {
+	cc.SendChan <- msg
+}
+
+func (cc *ComChannel) SendCopyAndRecv(msg ComMessage) ComMessage {
+	cc.SendCopy(msg)
 	return <-cc.RecvChan
 }
