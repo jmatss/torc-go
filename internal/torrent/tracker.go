@@ -98,9 +98,9 @@ func (t *Torrent) Request(peerId string) error {
 	if t.Tracker.Completed {
 		return fmt.Errorf("this torrent has already finished downloading")
 	} else if !t.Tracker.Started {
-		return t.TrackerRequest(peerId, Started)
+		return t.trackerRequest(peerId, Started)
 	} else {
-		return t.TrackerRequest(peerId, Interval)
+		return t.trackerRequest(peerId, Interval)
 	}
 }
 
@@ -108,13 +108,13 @@ func (t *Torrent) Request(peerId string) error {
 // will stop requesting data.
 func (t *Torrent) Stop(peerId string, completed bool) error {
 	if completed {
-		return t.TrackerRequest(peerId, Completed)
+		return t.trackerRequest(peerId, Completed)
 	} else {
-		return t.TrackerRequest(peerId, Stopped)
+		return t.trackerRequest(peerId, Stopped)
 	}
 }
 
-func (t *Torrent) TrackerRequest(peerId string, event EventId) error {
+func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 	params := url.Values{}
 	params.Add("info_hash", string(t.Tracker.InfoHash[:]))
 	params.Add("peer_id", peerId)
