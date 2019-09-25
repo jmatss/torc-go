@@ -55,7 +55,6 @@ func (id ComId) String() string {
 
 type ComMessage struct {
 	Id      ComId
-	Message string
 	Error   error            // Set when sending a response. Error == nil: everything fine.
 	Torrent *torrent.Torrent // Only used for "Add" messages.
 
@@ -65,34 +64,44 @@ type ComMessage struct {
 }
 
 type ComChannel struct {
-	Send chan ComMessage
-	Recv chan ComMessage
+	SendChan chan ComMessage
+	RecvChan chan ComMessage
 }
 
 func NewComChannel() ComChannel {
 	return ComChannel{
-		Send: make(chan ComMessage, ChanSize),
-		Recv: make(chan ComMessage, ChanSize),
+		SendChan: make(chan ComMessage, ChanSize),
+		RecvChan: make(chan ComMessage, ChanSize),
 	}
 }
 
-// Send a request and receive a response("Respond").
-func (cc *ComChannel) Request(id ComId, message string, infoHash ...[sha1.Size]byte) ComMessage {
-	cm := ComMessage{
-		Id:       id,
-		Message:  message,
-		InfoHash: infoHash,
-	}
-	cc.Send <- cm
-
-	return <-cc.Recv
+// Send a new message on the ComChannel.
+func (cc *ComChannel) Send(
+	id ComId,
+	error error,
+	torrent *torrent.Torrent,
+	infoHash ...[sha1.Size]byte,
+) {
+	cm := ComMessage{id, error, torrent, infoHash}
+	cc.SendChan <- cm
 }
 
-func (cc *ComChannel) Respond(id ComId, err error, infoHash ...[sha1.Size]byte) {
-	cm := ComMessage{
-		Id:       id,
-		Error:    err,
-		InfoHash: infoHash,
-	}
-	cc.Send <- cm
+// Send a copy of a message on the ComChannel.
+func (cc *ComChannel) SendCopy(msg ComMessage) {
+	cc.SendChan <- msg
+}
+
+// Send a new message on the ComChannel and block and wait on a response.
+func (cc *ComChannel) SendAndRecv(
+	id ComId,
+	error error,
+	torrent *torrent.Torrent,
+	infoHash ...[sha1.Size]byte,
+) ComMessage {
+	cc.Send(id, error, torrent, infoHash...)
+	return <-cc.RecvChan
+}
+
+func (cc *ComChannel) Recv() ComMessage {
+	return <-cc.RecvChan
 }
