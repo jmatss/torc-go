@@ -43,19 +43,19 @@ func Controller(clientCom ComChannel) {
 		switch received.Id {
 		case Add:
 			if received.Torrent == nil {
-				response = received
-				response.Error = fmt.Errorf("no torrent specified when trying to \"%s\"",
-					received.Id.String())
-
-				clientCom.SendCopy(response)
+				clientCom.SendCopyError(
+					received,
+					fmt.Errorf("no torrent specified when trying to \"%s\"",
+						received.Id.String()),
+				)
 			}
 
 			_, ok := handlers[string(received.Torrent.Tracker.InfoHash[:])]
 			if ok {
-				response = received
-				response.Error = fmt.Errorf("tried to add a torrent that already exists")
-
-				clientCom.SendCopy(response)
+				clientCom.SendCopyError(
+					received,
+					fmt.Errorf("tried to add a torrent that already exists"),
+				)
 			}
 
 			infoHash := string(received.Torrent.Tracker.InfoHash[:])
@@ -67,11 +67,11 @@ func Controller(clientCom ComChannel) {
 
 		case Delete:
 			if received.InfoHash == nil {
-				response = received
-				response.Error = fmt.Errorf("no torrent specified when trying to \"%s\"",
-					received.Id.String())
-
-				clientCom.SendCopy(response)
+				clientCom.SendCopyError(
+					received,
+					fmt.Errorf("no torrent specified when trying to \"%s\"",
+						received.Id.String()),
+				)
 			}
 
 			// Loop through and delete all specified torrents.
@@ -85,11 +85,11 @@ func Controller(clientCom ComChannel) {
 
 		case Start, Stop:
 			if received.InfoHash == nil {
-				response = received
-				response.Error = fmt.Errorf("no torrent specified when trying to \"%s\"",
-					received.Id.String())
-
-				clientCom.SendCopy(response)
+				clientCom.SendCopyError(
+					received,
+					fmt.Errorf("no torrent specified when trying to \"%s\"",
+						received.Id.String()),
+				)
 			}
 
 			// Loop through and start/stop all specified torrents.

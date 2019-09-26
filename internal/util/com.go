@@ -106,3 +106,9 @@ func (cc *ComChannel) SendCopyAndRecv(msg ComMessage) ComMessage {
 	cc.SendCopy(msg)
 	return <-cc.RecvChan
 }
+
+// Change the error message of a copy and send it on the ComChannel.
+func (cc *ComChannel) SendCopyError(msg ComMessage, err error) {
+	msg.Error = err
+	cc.SendChan <- msg
+}
