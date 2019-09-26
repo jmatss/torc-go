@@ -18,7 +18,6 @@ var (
 
 func Controller(clientCom ComChannel) {
 	PeerId = newPeerId()
-	var response ComMessage
 	var received ComMessage
 
 	// Spawn handlers. Every handler will be in charge of a specific torrent
@@ -38,7 +37,7 @@ func Controller(clientCom ComChannel) {
 	}
 
 	for {
-		received = <-clientCom.RecvChan
+		received = clientCom.Recv()
 
 		switch received.Id {
 		case Add:
