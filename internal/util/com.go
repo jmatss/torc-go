@@ -41,10 +41,8 @@ func (id ComId) String() string {
 		}[id]
 	} else {
 		return []string{
+			"Failure",
 			"Complete",
-			"NoConnection",
-			"DiskFull",
-			"PermissionDenied",
 		}[id%20]
 	}
 }
