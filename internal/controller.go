@@ -26,7 +26,7 @@ func Controller(clientCom ComChannel) {
 	handlers := make(map[string]ComChannel)
 	for _, tor := range fetchTorrentsFromDisk() {
 		infoHash := string(tor.Tracker.InfoHash[:])
-		handlers[infoHash] = addTorrent(tor)
+		handlers[infoHash] = createTorrentHandler(tor)
 
 		// TODO: Do this in another loop after this loop to start all handlers
 		//  before blocking and receiving the "results"
@@ -59,7 +59,7 @@ func Controller(clientCom ComChannel) {
 
 			infoHash := string(received.Torrent.Tracker.InfoHash[:])
 
-			handlers[infoHash] = addTorrent(received.Torrent)
+			handlers[infoHash] = createTorrentHandler(received.Torrent)
 			// Receive response from newly added handler and sent i through to
 			// the "client."
 			clientCom.SendCopy(handlers[infoHash].Recv())
@@ -139,7 +139,7 @@ func fetchTorrentsFromDisk() map[string]*torrent.Torrent {
 	return make(map[string]*torrent.Torrent, 0)
 }
 
-func addTorrent(tor *torrent.Torrent) ComChannel {
+func createTorrentHandler(tor *torrent.Torrent) ComChannel {
 	com := NewComChannel()
 	go Handler(tor, com, PeerId)
 	return com
