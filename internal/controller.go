@@ -25,15 +25,18 @@ func Controller(clientCom ComChannel) {
 	// The "ComChannel" in the map will be used to communicate with the handlers.
 	handlers := make(map[string]ComChannel)
 	for _, tor := range fetchTorrentsFromDisk() {
-		infoHash := string(tor.Tracker.InfoHash[:])
-		handlers[infoHash] = createTorrentHandler(tor)
+		currentHandler := createTorrentHandler(tor)
 
-		// TODO: Do this in another loop after this loop to start all handlers
-		//  before blocking and receiving the "results"
 		// Receive message from newly spawned handler and send it through to
-		// the "client" . The message will contain id "Success" or "Failure"
-		// depending on how the "start up" went fro the handler.
-		clientCom.SendCopy(handlers[infoHash].Recv())
+		// the "client". If the message contains an error, dont put it into
+		// the "handlers" map since the handler will have killed itself.
+		startupMsg := currentHandler.Recv()
+		if startupMsg.Error == nil {
+			infoHash := string(tor.Tracker.InfoHash[:])
+			handlers[infoHash] = currentHandler
+		}
+
+		clientCom.SendCopy(startupMsg)
 	}
 
 	for {
