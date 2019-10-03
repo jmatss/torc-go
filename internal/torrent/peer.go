@@ -98,8 +98,6 @@ func NewPeer(ipString string, port int64) Peer {
 // TODO: make sure to do "os.IsTimeout" on the returned error to see if it as timeout
 // https://wiki.theory.org/index.php/BitTorrentSpecification#Handshake
 // Initiates a handshake with the peer.
-// ! The callee is in charge of closing the returned connection, even when
-//  a error is returned !
 func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, error) {
 	var remote string
 	port := strconv.Itoa(int(p.Port))
@@ -133,6 +131,11 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 	}
 
 	conn, err := net.Dial(Protocol, remote)
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
 	if err != nil {
 		return nil, fmt.Errorf("unable to establish connection to "+
 			"%s: %w", remote, err)
