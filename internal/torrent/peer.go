@@ -272,8 +272,8 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 	if err != nil {
 		return err
 	} else if n != len(data) {
-		return fmt.Errorf("unable to send %s message to remote %s",
-			Bitfield.String(), p.Connection.RemoteAddr().String())
+		return fmt.Errorf("unable to send \"%s\" message to remote host %s",
+			messageId.String(), p.Connection.RemoteAddr().String())
 	}
 
 	return nil
