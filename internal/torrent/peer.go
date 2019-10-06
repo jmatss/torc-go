@@ -257,18 +257,18 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 	return nil
 }
 
-// Sends a bitfield message to the remote host.
-// Optionally sent to remote host after handshake to indicate
-// which pieces this client has. No need to send if this client
-// doesn't have any pieces.
-// Format: <lenPrefix=0001+len(bitfield)><id=5><bitfield>
-func (p *Peer) SendBitfield(bitField []byte) error {
-	lenPrefix := 1 + len(bitField)
-	id := byte(5)
+// Sends a message to this peer containing binary data.
+// Packet format: <length prefix><message ID><payload>
+//
+// This function can send:
+// Bitfield or Piece messages
+func (p *Peer) SendData(messageId MessageId, payload []byte) error {
+	lenPrefix := 1 + len(payload)
+	id := byte(messageId)
 	data := make([]byte, 0, 4+lenPrefix)
 
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
-	data = append(data, bitField...)
+	data = append(data, payload...)
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -287,8 +287,9 @@ func (p *Peer) SendBitfield(bitField []byte) error {
 // Packet format: <length prefix><message ID><payload>
 // Where <length prefix> is 4 bytes, <message ID> is 1 byte and <payload> is variable length.
 func (p *Peer) Recv() (MessageId, []byte, error) {
-	received := make([]byte, BufferSize)
-	n, err := p.Connection.Read(received)
+	// Read the "header" i.e. the first five bytes containing payload length and MessageId
+	header := make([]byte, 5)
+	n, err := p.Connection.Read(header)
 	if err != nil {
 		return 0, nil, err
 	} else if n == 4 { // Assume this is a keep alive message
@@ -298,11 +299,25 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	} else if n < 4 {
 		return 0, nil, fmt.Errorf("peer sent to few bytes, expected: >=4, got: %d", n)
 	}
+	dataLen := binary.BigEndian.Uint32(header[:4]) - 1 // -1 to "remove" len of messageId
+	messageId := MessageId(int(header[4]))
 
 	var data []byte
-	messageId := MessageId(int(received[4]))
+	if dataLen > 0 {
+		data = make([]byte, dataLen)
+		n, err = p.Connection.Read(data)
+		if err != nil {
+			return 0, nil, err
+		} else if n != int(dataLen) {
+			return 0, nil, fmt.Errorf("incorrect amount of data (excl. header) received from "+
+				"remote peer %s, expected: %d, got: %d", p.Connection.RemoteAddr().String(), dataLen, n)
+		}
+	}
 
 	switch messageId {
+	case KeepAlive:
+		// TODO: Nothing to do atm, might need to add functionality later
+		// This case will never be true
 	case Choke:
 		p.PeerChoking = true
 	case UnChoke:
@@ -312,11 +327,9 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	case NotInterested:
 		p.PeerIntrested = false
 	case Have:
-		data = received[5:9]
-		pieceIndex := binary.BigEndian.Uint32(data)
-
 		// Remote peer indicates that it has just received the piece with the index "pieceIndex".
 		// Update the "RemoteBitField" in this peer struct by OR:ing in a 1 at the correct index.
+		pieceIndex := binary.BigEndian.Uint32(data)
 		byteShift := pieceIndex / 8
 		bitShift := 8 - (pieceIndex % 8) // bits are stored in "reverse"
 		if int(byteShift) > len(p.RemoteBitField) {
@@ -325,17 +338,11 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 		}
 		p.RemoteBitField[byteShift] |= 1 << bitShift
 	case Request:
-		// TODO: Might need to do some if-statements on choking/interested fields
-		//  since the remote peer might not be allowed to request pieces.
-		// Format: 	<lenPrefix=000(13)><id=X><index(4B)><begin(4B)><length(4B)>
-
-		// TODO: should this function process and send a response here or should the information
-		//  be returned so another function can send the response?
-		data = received[5:17]
+		// TODO: Nothing to do atm, might need to add functionality later
 	case Piece:
-		data = received[4:n]
+		// TODO: Nothing to do atm, might need to add functionality later
 	case Cancel:
-		// TODO: No need to do something atm. Might need to add later.
+		// TODO: Nothing to do atm, might need to add functionality later
 	default:
 		return 0, nil, fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
