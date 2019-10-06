@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	Protocol   = "tcp"
-	Timeout    = 5 * time.Second
-	BufferSize = 1 << 16
+	Protocol = "tcp"
+	Timeout  = 5 * time.Second
+	// TODO: Currently all received messages have the same buffer size
+	//  which is wasteful when only receiving small amounts of data.
+	BufferSize = 1 << 16 // arbitrary size
 
 	// The KeepAlive message doesn't have an id,
 	//  set to -1 so that it still can be distinguished.
@@ -26,7 +28,7 @@ const (
 	Have
 	Bitfield
 	Request
-	_ // Piece, not used
+	Piece
 	Cancel
 )
 
@@ -277,4 +279,66 @@ func (p *Peer) SendBitfield(bitField []byte) error {
 	}
 
 	return nil
+}
+
+// Received a message on the connection for this peer.
+// Returns the MessageId, some extra data in []byte format if needed and an error.
+//
+// Packet format: <length prefix><message ID><payload>
+// Where <length prefix> is 4 bytes, <message ID> is 1 byte and <payload> is variable length.
+func (p *Peer) Recv() (MessageId, []byte, error) {
+	received := make([]byte, BufferSize)
+	n, err := p.Connection.Read(received)
+	if err != nil {
+		return 0, nil, err
+	} else if n == 4 { // Assume this is a keep alive message
+		// TODO: Keep a timer for keep alive messages so that this peer can be killed
+		//  if it stops sending messages for a while. ~2 min seems to be a common time.
+		return -1, nil, nil
+	} else if n < 4 {
+		return 0, nil, fmt.Errorf("peer sent to few bytes, expected: >=4, got: %d", n)
+	}
+
+	var data []byte
+	messageId := MessageId(int(received[4]))
+
+	switch messageId {
+	case Choke:
+		p.PeerChoking = true
+	case UnChoke:
+		p.PeerChoking = false
+	case Interested:
+		p.PeerIntrested = true
+	case NotInterested:
+		p.PeerIntrested = false
+	case Have:
+		data = received[5:9]
+		pieceIndex := binary.BigEndian.Uint32(data)
+
+		// Remote peer indicates that it has just received the piece with the index "pieceIndex".
+		// Update the "RemoteBitField" in this peer struct by OR:ing in a 1 at the correct index.
+		byteShift := pieceIndex / 8
+		bitShift := 8 - (pieceIndex % 8) // bits are stored in "reverse"
+		if int(byteShift) > len(p.RemoteBitField) {
+			return 0, nil, fmt.Errorf("the remote peer has specified a piece index " +
+				"that is to big to fit in it's bitfield")
+		}
+		p.RemoteBitField[byteShift] |= 1 << bitShift
+	case Request:
+		// TODO: Might need to do some if-statements on choking/interested fields
+		//  since the remote peer might not be allowed to request pieces.
+		// Format: 	<lenPrefix=000(13)><id=X><index(4B)><begin(4B)><length(4B)>
+
+		// TODO: should this function process and send a response here or should the information
+		//  be returned so another function can send the response?
+		data = received[5:17]
+	case Piece:
+		data = received[4:n]
+	case Cancel:
+		// TODO: No need to do something atm. Might need to add later.
+	default:
+		return 0, nil, fmt.Errorf("unexpected message id \"%d\"", messageId)
+	}
+
+	return messageId, data, nil
 }
