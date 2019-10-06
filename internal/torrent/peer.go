@@ -16,7 +16,7 @@ const (
 	Timeout  = 5 * time.Second
 	// TODO: Currently all received messages have the same buffer size
 	//  which is wasteful when only receiving small amounts of data.
-	BufferSize = 1 << 16 // arbitrary size
+	HandshakeBufferSize = 1 << 7 // arbitrary size
 
 	// The KeepAlive message doesn't have an id,
 	//  set to -1 so that it still can be distinguished.
@@ -157,7 +157,7 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 			"expected: %d, got: %d", len(data), n)
 	}
 
-	response := make([]byte, BufferSize)
+	response := make([]byte, HandshakeBufferSize)
 	n, err = conn.Read(response)
 	if err != nil {
 		return nil, err
@@ -201,8 +201,8 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 //
 // Format of variadic int "input":
 // - KeepAlive, Choke, UnChoke, Interested, NotInterested: Not used
-// - Have: (<piece index>)
-// - Request, Cancel: (<index>, <begin>, <length>)
+// - Have: <piece index>[0]
+// - Request, Cancel: <index>[0], <begin>[1], <length>[2]
 func (p *Peer) Send(messageId MessageId, input ...int) error {
 	var data []byte
 	id := byte(messageId)
