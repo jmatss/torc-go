@@ -12,10 +12,8 @@ import (
 )
 
 const (
-	Protocol = "tcp"
-	Timeout  = 5 * time.Second
-	// TODO: Currently all received messages have the same buffer size
-	//  which is wasteful when only receiving small amounts of data.
+	Protocol            = "tcp"
+	Timeout             = 5 * time.Second
 	HandshakeBufferSize = 1 << 7 // arbitrary size
 
 	// The KeepAlive message doesn't have an id,
@@ -65,10 +63,10 @@ type Peer struct {
 	Connection     net.Conn
 	RemoteBitField []byte
 
-	AmChoking     bool
-	AmIntrested   bool
-	PeerChoking   bool
-	PeerIntrested bool
+	AmChoking      bool
+	AmInterested   bool
+	PeerChoking    bool
+	PeerInterested bool
 }
 
 // Parameter ipString can be either IPv4, IPv6 or a hostname.
@@ -76,10 +74,10 @@ func NewPeer(ipString string, port int64) Peer {
 	peer := Peer{
 		Port: port,
 
-		AmChoking:     true,
-		AmIntrested:   false,
-		PeerChoking:   true,
-		PeerIntrested: false,
+		AmChoking:      true,
+		AmInterested:   false,
+		PeerChoking:    true,
+		PeerInterested: false,
 	}
 
 	// Can parse either IPv4 or IPv6.
@@ -323,9 +321,9 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	case UnChoke:
 		p.PeerChoking = false
 	case Interested:
-		p.PeerIntrested = true
+		p.PeerInterested = true
 	case NotInterested:
-		p.PeerIntrested = false
+		p.PeerInterested = false
 	case Have:
 		// Remote peer indicates that it has just received the piece with the index "pieceIndex".
 		// Update the "RemoteBitField" in this peer struct by OR:ing in a 1 at the correct index.
