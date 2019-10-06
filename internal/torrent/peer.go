@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	Protocol   = "tcp"
-	Timeout    = 5 * time.Second
-	BufferSize = 1 << 16
+	Protocol            = "tcp"
+	Timeout             = 5 * time.Second
+	HandshakeBufferSize = 1 << 7 // arbitrary size
 
 	// The KeepAlive message doesn't have an id,
 	//  set to -1 so that it still can be distinguished.
@@ -26,7 +26,7 @@ const (
 	Have
 	Bitfield
 	Request
-	_ // Piece, not used
+	Piece
 	Cancel
 )
 
@@ -63,10 +63,10 @@ type Peer struct {
 	Connection     net.Conn
 	RemoteBitField []byte
 
-	AmChoking     bool
-	AmIntrested   bool
-	PeerChoking   bool
-	PeerIntrested bool
+	AmChoking      bool
+	AmInterested   bool
+	PeerChoking    bool
+	PeerInterested bool
 }
 
 // Parameter ipString can be either IPv4, IPv6 or a hostname.
@@ -74,10 +74,10 @@ func NewPeer(ipString string, port int64) Peer {
 	peer := Peer{
 		Port: port,
 
-		AmChoking:     true,
-		AmIntrested:   false,
-		PeerChoking:   true,
-		PeerIntrested: false,
+		AmChoking:      true,
+		AmInterested:   false,
+		PeerChoking:    true,
+		PeerInterested: false,
 	}
 
 	// Can parse either IPv4 or IPv6.
@@ -155,7 +155,7 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 			"expected: %d, got: %d", len(data), n)
 	}
 
-	response := make([]byte, BufferSize)
+	response := make([]byte, HandshakeBufferSize)
 	n, err = conn.Read(response)
 	if err != nil {
 		return nil, err
@@ -199,8 +199,8 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 //
 // Format of variadic int "input":
 // - KeepAlive, Choke, UnChoke, Interested, NotInterested: Not used
-// - Have: (<piece index>)
-// - Request, Cancel: (<index>, <begin>, <length>)
+// - Have: <piece index>[0]
+// - Request, Cancel: <index>[0], <begin>[1], <length>[2]
 func (p *Peer) Send(messageId MessageId, input ...int) error {
 	var data []byte
 	id := byte(messageId)
@@ -255,26 +255,95 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 	return nil
 }
 
-// Sends a bitfield message to the remote host.
-// Optionally sent to remote host after handshake to indicate
-// which pieces this client has. No need to send if this client
-// doesn't have any pieces.
-// Format: <lenPrefix=0001+len(bitfield)><id=5><bitfield>
-func (p *Peer) SendBitfield(bitField []byte) error {
-	lenPrefix := 1 + len(bitField)
-	id := byte(5)
+// Sends a message to this peer containing binary data.
+// Packet format: <length prefix><message ID><payload>
+//
+// This function can send:
+// Bitfield or Piece messages
+func (p *Peer) SendData(messageId MessageId, payload []byte) error {
+	lenPrefix := 1 + len(payload)
+	id := byte(messageId)
 	data := make([]byte, 0, 4+lenPrefix)
 
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
-	data = append(data, bitField...)
+	data = append(data, payload...)
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
 		return err
 	} else if n != len(data) {
-		return fmt.Errorf("unable to send %s message to remote %s",
-			Bitfield.String(), p.Connection.RemoteAddr().String())
+		return fmt.Errorf("unable to send \"%s\" message to remote host %s",
+			messageId.String(), p.Connection.RemoteAddr().String())
 	}
 
 	return nil
+}
+
+// Received a message on the connection for this peer.
+// Returns the MessageId, some extra data in []byte format if needed and an error.
+//
+// Packet format: <length prefix><message ID><payload>
+// Where <length prefix> is 4 bytes, <message ID> is 1 byte and <payload> is variable length.
+func (p *Peer) Recv() (MessageId, []byte, error) {
+	// Read the "header" i.e. the first five bytes containing payload length and MessageId
+	header := make([]byte, 5)
+	n, err := p.Connection.Read(header)
+	if err != nil {
+		return 0, nil, err
+	} else if n == 4 { // Assume this is a keep alive message
+		// TODO: Keep a timer for keep alive messages so that this peer can be killed
+		//  if it stops sending messages for a while. ~2 min seems to be a common time.
+		return -1, nil, nil
+	} else if n < 4 {
+		return 0, nil, fmt.Errorf("peer sent to few bytes, expected: >=4, got: %d", n)
+	}
+	dataLen := binary.BigEndian.Uint32(header[:4]) - 1 // -1 to "remove" len of messageId
+	messageId := MessageId(int(header[4]))
+
+	var data []byte
+	if dataLen > 0 {
+		data = make([]byte, dataLen)
+		n, err = p.Connection.Read(data)
+		if err != nil {
+			return 0, nil, err
+		} else if n != int(dataLen) {
+			return 0, nil, fmt.Errorf("incorrect amount of data (excl. header) received from "+
+				"remote peer %s, expected: %d, got: %d", p.Connection.RemoteAddr().String(), dataLen, n)
+		}
+	}
+
+	switch messageId {
+	case KeepAlive:
+		// TODO: Nothing to do atm, might need to add functionality later
+		// This case will never be true
+	case Choke:
+		p.PeerChoking = true
+	case UnChoke:
+		p.PeerChoking = false
+	case Interested:
+		p.PeerInterested = true
+	case NotInterested:
+		p.PeerInterested = false
+	case Have:
+		// Remote peer indicates that it has just received the piece with the index "pieceIndex".
+		// Update the "RemoteBitField" in this peer struct by OR:ing in a 1 at the correct index.
+		pieceIndex := binary.BigEndian.Uint32(data)
+		byteShift := pieceIndex / 8
+		bitShift := 8 - (pieceIndex % 8) // bits are stored in "reverse"
+		if int(byteShift) > len(p.RemoteBitField) {
+			return 0, nil, fmt.Errorf("the remote peer has specified a piece index " +
+				"that is to big to fit in it's bitfield")
+		}
+		p.RemoteBitField[byteShift] |= 1 << bitShift
+	case Request:
+		// TODO: Nothing to do atm, might need to add functionality later
+	case Piece:
+		// TODO: Nothing to do atm, might need to add functionality later
+	case Cancel:
+		// TODO: Nothing to do atm, might need to add functionality later
+	default:
+		return 0, nil, fmt.Errorf("unexpected message id \"%d\"", messageId)
+	}
+
+	return messageId, data, nil
 }
