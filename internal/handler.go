@@ -16,16 +16,16 @@ const (
 // , a timeout at which it should poll the tracker for new peers or an error from
 // a remote peer.
 // TODO: setup so that other peers can connect to this handler
-func Handler(tor *torrent.Torrent, com ComChannel, peerId string) {
+func Handler(tor *torrent.Torrent, controllerCom ComChannel, peerId string) {
 	retryCount := 0
 
 	// Make tracker request and send back result to the controller over the ComChannel.
 	// The handler will kill itself if it isn't able to complete it's tracker request.
 	if err := tor.Request(peerId); err != nil {
-		com.Send(TotalFailure, err, nil, tor.Tracker.InfoHash)
+		controllerCom.Send(TotalFailure, err, nil, tor.Tracker.InfoHash)
 		return
 	} else {
-		com.Send(Success, nil, nil, tor.Tracker.InfoHash)
+		controllerCom.Send(Success, nil, nil, tor.Tracker.InfoHash)
 	}
 
 	// TODO: Maybe add an extra error message at the end of the loop
@@ -33,7 +33,7 @@ func Handler(tor *torrent.Torrent, com ComChannel, peerId string) {
 	for _, peer := range tor.Tracker.Peers {
 		conn, err := peer.Handshake(peerId, tor.Tracker.InfoHash)
 		if err != nil {
-			com.Send(Failure, err, nil, tor.Tracker.InfoHash)
+			controllerCom.Send(Failure, err, nil, tor.Tracker.InfoHash)
 		} else {
 			peer.Connection = conn
 		}
@@ -45,22 +45,28 @@ func Handler(tor *torrent.Torrent, com ComChannel, peerId string) {
 		interval := time.Duration(tor.Tracker.Interval)
 
 		select {
-		case msg = <-com.RecvChan:
+		case msg = <-controllerCom.RecvChan:
 
 		case <-time.After(interval * time.Second):
-			// TODO: implement some sort of retry functionality so that
-			//  it just doesn't kill itself after
-			err := tor.Request(peerId)
-			if err != nil {
+			if err := tor.Request(peerId); err != nil {
 				retryCount++
 				if retryCount >= MaxRetryCount {
-					com.Send(Failure, err, nil, tor.Tracker.InfoHash)
-					if err != nil {
-						return
-					}
+					controllerCom.Send(TotalFailure, err, nil, tor.Tracker.InfoHash)
+					return
+				} else {
+					controllerCom.Send(Failure, err, nil, tor.Tracker.InfoHash)
 				}
+			} else {
+				retryCount = 0
 			}
 		}
 	}
+
+}
+
+// TODO: implements some sort of peerHandler.
+//  How should the "handler" keep track of all the peers that currently have a peerHandler?
+//  How should new peerHandlers be added after a tracker request?
+func PeerHandler() {
 
 }

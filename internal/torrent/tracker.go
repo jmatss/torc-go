@@ -183,6 +183,9 @@ func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 	if err != nil {
 		return fmt.Errorf("unable to unmarshal the response body into "+
 			"the tracker: %w", err)
+	} else if t.Tracker.Interval <= 0 {
+		return fmt.Errorf("received tracker response has interval time "+
+			"less than or equal zero", err)
 	}
 
 	peers, err := getPeers(body)
