@@ -347,3 +347,18 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 
 	return messageId, data, nil
 }
+
+// Compares the IP/hostname of the peer.
+// Will return false if a host has changed from using a hostname, IPv4 or IPv6 to one of the other,
+// i.e. dns.google and 8.8.8.8 might be the same host, but this function will return false.
+func (p *Peer) Equal(other *Peer) bool {
+	if p.UsingIp != other.UsingIp { // "xor"
+		return false
+	}
+
+	if p.UsingIp {
+		return p.Ip.Equal(other.Ip)
+	} else {
+		return strings.ToLower(p.Hostname) == strings.ToLower(other.Hostname)
+	}
+}
