@@ -53,6 +53,10 @@ func NewTorrent(filename string) (*Torrent, error) {
 	err = bencode.Unmarshal(file, torrent)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create new torrent: %w", err)
+	} else if torrent.Info.PieceLength == 0 {
+		return nil, fmt.Errorf("unable to parse piece length from torrent: %w", err)
+	} else if torrent.Info.Pieces == "" || len(torrent.Info.Pieces)%20 != 0 {
+		return nil, fmt.Errorf("unable to parse pieces from torrent: %w", err)
 	}
 
 	// Get data from the "files" field from the torrent file.

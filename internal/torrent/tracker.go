@@ -80,8 +80,9 @@ func NewTracker(torrent *Torrent, file *os.File) error {
 	}
 	tracker.Left = left
 
-	// bitfield initialized to all zeros
-	bitFieldLength := ((len(torrent.Info.Files) - 1) / 8) + 1
+	// Pieces will be divisible by 20
+	// Bitfield initialized to all zeros
+	bitFieldLength := ((len(torrent.Info.Pieces) / 20) / 8) + 1
 	tracker.BitField = make([]byte, bitFieldLength)
 
 	// Uploaded, Downloaded, Interval, Seeders and Leecehers initialized to 0
