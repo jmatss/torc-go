@@ -60,13 +60,17 @@ func Controller(clientCom ComChannel) {
 				)
 			}
 
-			infoHash := string(received.Torrent.Tracker.InfoHash[:])
+			currentHandlerCom := createTorrentHandler(received.Torrent)
+			response := currentHandlerCom.Recv()
 
-			handlers[infoHash] = createTorrentHandler(received.Torrent)
-			// Receive response from newly added handler and sent i through to
-			// the "client."
-			clientCom.SendCopy(handlers[infoHash].Recv())
+			// Do not add this handler to "handlers" if it fails since the handler will
+			// kill itself.
+			if response.Id != TotalFailure {
+				infoHash := string(received.Torrent.Tracker.InfoHash[:])
+				handlers[infoHash] = currentHandlerCom
+			}
 
+			clientCom.SendCopy(response)
 		case Delete:
 			if received.InfoHash == nil {
 				clientCom.SendCopyError(
@@ -115,6 +119,10 @@ func Controller(clientCom ComChannel) {
 			}
 
 			return
+		case Failure:
+			// TODO: add logic for failure of handler
+		case TotalFailure:
+			// TODO:
 		}
 	}
 }

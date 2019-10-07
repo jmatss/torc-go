@@ -26,7 +26,9 @@ const (
 
 const (
 	// Sent from "handlers" up towards "client", starts at index 20
-	Failure ComId = iota + 20 // general error
+	Success ComId = iota + 20 // general error
+	Failure
+	TotalFailure
 	Complete
 )
 
@@ -41,7 +43,9 @@ func (id ComId) String() string {
 		}[id]
 	} else {
 		return []string{
+			"Success",
 			"Failure",
+			"TotalFailure",
 			"Complete",
 		}[id%20]
 	}

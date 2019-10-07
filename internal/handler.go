@@ -19,12 +19,13 @@ const (
 func Handler(tor *torrent.Torrent, com ComChannel, peerId string) {
 	retryCount := 0
 
-	// Make tracker request and send back error to the controller over the ComChannel.
+	// Make tracker request and send back result to the controller over the ComChannel.
 	// The handler will kill itself if it isn't able to complete it's tracker request.
-	err := tor.Request(peerId)
-	com.Send(Add, err, nil, tor.Tracker.InfoHash)
-	if err != nil {
+	if err := tor.Request(peerId); err != nil {
+		com.Send(TotalFailure, err, nil, tor.Tracker.InfoHash)
 		return
+	} else {
+		com.Send(Success, nil, nil, tor.Tracker.InfoHash)
 	}
 
 	// TODO: Maybe add an extra error message at the end of the loop
@@ -38,16 +39,15 @@ func Handler(tor *torrent.Torrent, com ComChannel, peerId string) {
 		}
 	}
 
-	interval := tor.Tracker.Interval
-
 	// TODO: implement
 	for {
 		var msg ComMessage
+		interval := time.Duration(tor.Tracker.Interval)
 
 		select {
 		case msg = <-com.RecvChan:
 
-		case <-time.After(time.Duration(interval) * time.Second):
+		case <-time.After(interval * time.Second):
 			// TODO: implement some sort of retry functionality so that
 			//  it just doesn't kill itself after
 			err := tor.Request(peerId)
