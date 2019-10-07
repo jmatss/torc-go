@@ -122,27 +122,16 @@ func getFiles(file *os.File) ([]Files, error) {
 		/*
 			Single file torrent
 		*/
-		length, ok := lengthInterface.(int64)
-		if !ok {
-			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-				"expected \"length\" field to contain an int")
+		if length, ok := lengthInterface.(int64); ok {
+			if nameInterface, ok := infoMap["name"]; ok {
+				if name, ok := nameInterface.(string); ok {
+					// Reuse the "name" field as "path"
+					files = append(files, Files{length, []string{name}})
+				}
+			}
 		}
-
-		nameInterface, ok := infoMap["name"]
-		if !ok {
-			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-				"couldn't find field \"name\"")
-		}
-
-		name, ok := nameInterface.(string)
-		if !ok {
-			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-				"expected \"name\" field to contain a string")
-		}
-
-		// Reuse the "name" field as "path"
-		files = append(files, Files{length, []string{name}})
-
+		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
+			"unable to parse the \"length\" and/or \"name\" field")
 	} else {
 		/*
 			Multiple files torrent
@@ -220,23 +209,13 @@ func getInfoMap(file *os.File) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("unable to bencode decode torrent file: %w", err)
 	}
 
-	torrentMap, ok := torrentInterface.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-			"expected file to be wrapped in map")
+	if torrentMap, ok := torrentInterface.(map[string]interface{}); ok {
+		if infoInterface, ok := torrentMap["info"]; ok {
+			if infoMap, ok := infoInterface.(map[string]interface{}); ok {
+				return infoMap, nil
+			}
+		}
 	}
-
-	infoInterface, ok := torrentMap["info"]
-	if !ok {
-		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-			"couldn't find field \"info\"")
-	}
-
-	infoMap, ok := infoInterface.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-			"expected \"info\" field to contain a map")
-	}
-
-	return infoMap, nil
+	return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
+		"unable to parse the \"info\" field")
 }
