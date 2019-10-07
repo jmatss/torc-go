@@ -188,7 +188,28 @@ func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 	if err != nil {
 		return err
 	}
-	t.Tracker.Peers = peers
+
+	// If true: first "contact" with the tracker, i.e. all received peers are new,
+	//	        add all of them to the the tracker struct.
+	// Else: append all new peers that doesn't already exist in the "old" peers
+	if t.Tracker.Peers == nil {
+		t.Tracker.Peers = peers
+	} else {
+		var alreadyExists bool
+		for _, newPeer := range peers {
+			alreadyExists = false
+			for _, oldPeer := range t.Tracker.Peers {
+				if oldPeer.Equal(&newPeer) {
+					alreadyExists = true
+					break
+				}
+			}
+
+			if !alreadyExists {
+				t.Tracker.Peers = append(t.Tracker.Peers, newPeer)
+			}
+		}
+	}
 
 	return nil
 }
