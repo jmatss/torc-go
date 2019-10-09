@@ -3,6 +3,7 @@ package torrent
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/jackpal/bencode-go"
 )
@@ -23,19 +24,23 @@ type Torrent struct {
 // "Files" in single file mode is 1
 type Info struct {
 	PieceLength int64  `bencode:"piece length"`
-	Pieces      string // will consist of multiple 20-byte sha1 Pieces, might be better to split into slices
-	Name        string
+	Pieces      string // Will consist of multiple 20-byte sha1 Pieces, might be better to split into slices
+	Name        string // Is ignored; "path" in "Files" is used instead.
 	Files       []Files
 }
 
 type Files struct {
+	// Index is the start index of this file in the whole "byte stream".
+	Index  int64
 	Length int64
 	Path   []string
 }
 
-// Create and return a new Torrent struct including a Tracker struct
+// Create and return a new Torrent struct including a Tracker struct.
 func NewTorrent(filename string) (*Torrent, error) {
-	// see if file exists and is a file (rather than dir)
+	filename = filepath.FromSlash(filename)
+
+	// see if file exists
 	fileStat, err := os.Stat(filename)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get stat of %s: %w", filename, err)
@@ -130,7 +135,14 @@ func getFiles(file *os.File) ([]Files, error) {
 			if nameInterface, ok := infoMap["name"]; ok {
 				if name, ok := nameInterface.(string); ok {
 					// Reuse the "name" field as "path"
-					files = append(files, Files{length, []string{name}})
+					files = append(
+						files,
+						Files{
+							Index:  0,
+							Length: length,
+							Path:   []string{name},
+						},
+					)
 				}
 			}
 		}
@@ -140,6 +152,8 @@ func getFiles(file *os.File) ([]Files, error) {
 		/*
 			Multiple files torrent
 		*/
+		var totalLength int64 = 0
+
 		filesInterface, ok := infoMap["files"]
 		if !ok {
 			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
@@ -197,7 +211,16 @@ func getFiles(file *os.File) ([]Files, error) {
 				path = append(path, pathString)
 			}
 
-			files = append(files, Files{length, path})
+			files = append(
+				files,
+				Files{
+					Index:  totalLength,
+					Length: length,
+					Path:   path,
+				},
+			)
+
+			totalLength += length
 		}
 	}
 
