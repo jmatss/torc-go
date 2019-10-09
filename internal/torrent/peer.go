@@ -293,7 +293,7 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	dataLen := binary.BigEndian.Uint32(header[:4]) - 1 // -1 to "remove" len of messageId
 	messageId := MessageId(int(header[4]))
 
-	var data []byte
+	var data []byte = nil
 	if dataLen > 0 {
 		data = make([]byte, dataLen)
 		n, err = p.Connection.Read(data)
@@ -303,39 +303,6 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 			return 0, nil, fmt.Errorf("incorrect amount of data (excl. header) received from "+
 				"remote peer %s, expected: %d, got: %d", p.Connection.RemoteAddr().String(), dataLen, n)
 		}
-	}
-
-	switch messageId {
-	case KeepAlive:
-		// TODO: Nothing to do atm, might need to add functionality later
-		// This case will never be true
-	case Choke:
-		p.PeerChoking = true
-	case UnChoke:
-		p.PeerChoking = false
-	case Interested:
-		p.PeerInterested = true
-	case NotInterested:
-		p.PeerInterested = false
-	case Have:
-		// Remote peer indicates that it has just received the piece with the index "pieceIndex".
-		// Update the "RemoteBitField" in this peer struct by OR:ing in a 1 at the correct index.
-		pieceIndex := binary.BigEndian.Uint32(data)
-		byteShift := pieceIndex / 8
-		bitShift := 8 - (pieceIndex % 8) // bits are stored in "reverse"
-		if int(byteShift) > len(p.RemoteBitField) {
-			return 0, nil, fmt.Errorf("the remote peer has specified a piece index " +
-				"that is to big to fit in it's bitfield")
-		}
-		p.RemoteBitField[byteShift] |= 1 << bitShift
-	case Request:
-		// TODO: Nothing to do atm, might need to add functionality later
-	case Piece:
-		// TODO: Nothing to do atm, might need to add functionality later
-	case Cancel:
-		// TODO: Nothing to do atm, might need to add functionality later
-	default:
-		return 0, nil, fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
 
 	return messageId, data, nil
