@@ -55,10 +55,11 @@ func (id MessageId) String() string {
 }
 
 type Peer struct {
-	UsingIp  bool
-	Ip       net.IP
-	Hostname string
-	Port     int64
+	UsingIp     bool
+	Ip          net.IP
+	Hostname    string
+	Port        int64
+	HostAndPort string
 
 	Connection     net.Conn
 	RemoteBitField []byte
@@ -90,7 +91,14 @@ func NewPeer(ipString string, port int64) Peer {
 	} else {
 		peer.UsingIp = true
 		peer.Ip = ip
+
+		// ip.To4 will return nil if it isn't a valid IPv4 address,
+		// assume it is a IPv6 address
+		if ip.To4() == nil {
+			ipString = "[" + ipString + "]"
+		}
 	}
+	peer.HostAndPort = ipString + ":" + strconv.Itoa(int(port))
 
 	return peer
 }
@@ -99,21 +107,6 @@ func NewPeer(ipString string, port int64) Peer {
 // https://wiki.theory.org/index.php/BitTorrentSpecification#Handshake
 // Initiates a handshake with the peer.
 func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, error) {
-	var remote string
-	port := strconv.Itoa(int(p.Port))
-
-	if p.UsingIp {
-		ip := p.Ip.String()
-		if strings.Contains(ip, ":") {
-			// Assume IP containing colon is IPv6, need to wrap inside square brackets
-			ip = "[" + ip + "]"
-		}
-
-		remote = ip + ":" + port
-	} else {
-		remote = p.Hostname + ":" + port
-	}
-
 	// handshake: <pstrlen><pstr><reserved><info_hash><peer_id>
 	// See specification link at top of function for more info
 	dataLength := 1 + PStrLen + 8 + len(infoHash) + len(peerId)
@@ -130,7 +123,7 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 			"expected: %d, got: %d", dataLength, len(data))
 	}
 
-	conn, err := net.Dial(Protocol, remote)
+	conn, err := net.Dial(Protocol, p.HostAndPort)
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -138,7 +131,7 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 	}()
 	if err != nil {
 		return nil, fmt.Errorf("unable to establish connection to "+
-			"%s: %w", remote, err)
+			"%s: %w", p.HostAndPort, err)
 	}
 
 	err = conn.SetDeadline(time.Now().Add(Timeout))
