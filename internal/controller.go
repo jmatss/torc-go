@@ -8,15 +8,13 @@ import (
 
 	"github.com/jmatss/torc/internal/torrent"
 	"github.com/jmatss/torc/internal/util/com"
-)
-
-// TODO: move vars somewhere else
-var (
-	PeerId       = newPeerId()
-	DownloadPath = fetchDownloadPathFromDisk()
+	"github.com/jmatss/torc/internal/util/cons"
 )
 
 func Controller(comView com.Channel, childId string) {
+	cons.DownloadPath = fetchDownloadPathFromDisk()
+	cons.PeerId = newPeerId()
+
 	comView.AddChild(childId)
 	defer comView.RemoveChild(childId)
 
@@ -38,6 +36,7 @@ func Controller(comView com.Channel, childId string) {
 				if received.Torrent == nil {
 					comView.SendParent(
 						com.Failure,
+						nil,
 						fmt.Errorf("no torrent specified when trying to \"%s\"", received.Id.String()),
 						nil,
 						childId,
@@ -48,6 +47,7 @@ func Controller(comView com.Channel, childId string) {
 				if comTorrentHandler.Exists(handlerId) {
 					comView.SendParent(
 						com.Failure,
+						nil,
 						fmt.Errorf("tried to add a torrent that already exists"),
 						nil,
 						childId,
@@ -59,19 +59,18 @@ func Controller(comView com.Channel, childId string) {
 				go TorrentHandler(comTorrentHandler, received.Torrent)
 
 			case com.Remove, com.Start, com.Stop:
-				if ok := comTorrentHandler.SendChild(received.Id, nil, nil, childId); !ok {
+				if ok := comTorrentHandler.SendChild(received.Id, nil, nil, nil, childId); !ok {
 					comView.SendParent(
 						com.Failure,
+						nil,
 						fmt.Errorf("tried to \"%s\" non existing torrent", received.Id),
 						nil,
 						childId,
 					)
 				}
 
-			case com.Quit:
-				comTorrentHandler.SendChildren(com.Quit)
-				return
-
+			case com.Quit, com.List:
+				comTorrentHandler.SendChildren(received.Id, nil)
 			}
 
 		case received := <-comTorrentHandler.Parent:
@@ -79,7 +78,7 @@ func Controller(comView com.Channel, childId string) {
 				Received message from one of the "handlers"/children.
 			*/
 			switch received.Id {
-			case com.Add, com.Remove, com.Start, com.Stop:
+			case com.Add, com.Remove, com.Start, com.Stop, com.List:
 				// The torrentHandler has executed the commands sent from the view.
 				// Just pass along to the view so it can see the results.
 				comView.SendParentCopy(received, childId)
