@@ -14,48 +14,43 @@ const (
 type Id int
 
 const (
-	// Sent from "client" down towards "handlers"
 	Add Id = iota
 	Remove
-	Start // Start stopped/paused torrent download
-	Stop  // Stop/pause download
+	Start
+	Stop
 	Quit
-)
-
-const (
-	// Sent from "handlers" up towards "client", starts at index 20
-	Success Id = iota + 20 // general error
+	List
+	Have
+	Success
 	Failure
-	TotalFailure
+	TotalFailure // Failure where the process kills itself
 	Exiting
 	Complete
 )
 
 func (id Id) String() string {
-	if id < 20 {
-		return []string{
-			"Add",
-			"Remove",
-			"Start",
-			"Stop",
-			"Quit",
-		}[id]
-	} else {
-		return []string{
-			"Success",
-			"Failure",
-			"TotalFailure",
-			"Exiting",
-			"Complete",
-		}[id%20]
-	}
+	return []string{
+		"Add",
+		"Remove",
+		"Start",
+		"Stop",
+		"Quit",
+		"List",
+		"Have",
+		"Success",
+		"Failure",
+		"TotalFailure",
+		"Exiting",
+		"Complete",
+	}[id]
 }
 
 type Message struct {
 	Id      Id
 	Torrent *torrent.Torrent
+	Data    []byte
 
-	// Set when sending a response. Error == nil: everything fine.
+	// Error == nil: everything fine.
 	Error error
 
 	// Specified the child identifier if a child sent this msg.
@@ -80,11 +75,12 @@ func New() Channel {
 // Send a message to the parent from this "child".
 func (ch *Channel) SendParent(
 	id Id,
+	data []byte,
 	error error,
 	torrent *torrent.Torrent,
 	child string,
 ) {
-	sendNew(ch.Parent, id, error, torrent, child)
+	sendNew(ch.Parent, id, data, error, torrent, child)
 }
 
 // Sends a message to the specified child.
@@ -92,6 +88,7 @@ func (ch *Channel) SendParent(
 // doesn't exist (i.e. the child isn't in the "children" map).
 func (ch *Channel) SendChild(
 	id Id,
+	data []byte,
 	error error,
 	torrent *torrent.Torrent,
 	child string,
@@ -101,14 +98,14 @@ func (ch *Channel) SendChild(
 		return false
 	}
 
-	sendNew(childCh, id, error, torrent, child)
+	sendNew(childCh, id, data, error, torrent, child)
 	return true
 }
 
 // Sends a message to all children.
-func (ch *Channel) SendChildren(id Id) {
+func (ch *Channel) SendChildren(id Id, data []byte) {
 	for child, childCh := range ch.children {
-		sendNew(childCh, id, nil, nil, child)
+		sendNew(childCh, id, data, nil, nil, child)
 	}
 }
 
@@ -145,11 +142,18 @@ func send(ch chan Message, msg Message) {
 func sendNew(
 	ch chan Message,
 	id Id,
+	data []byte,
 	error error,
 	torrent *torrent.Torrent,
 	child string,
 ) {
-	msg := Message{id, torrent, error, child}
+	msg := Message{
+		Id:      id,
+		Data:    data,
+		Torrent: torrent,
+		Error:   error,
+		Child:   child,
+	}
 	send(ch, msg)
 }
 
@@ -182,7 +186,7 @@ func (ch *Channel) CountChildren() int {
 // Adds a child channel to this Channel. The child will add itself so that
 // it can receive messages from the parent.
 func (ch *Channel) AddChild(child string) {
-	ch.children["Child"] = make(chan Message, ChanSize)
+	ch.children[child] = make(chan Message, ChanSize)
 }
 
 // Removes the channel for this child. Should be called when this child
@@ -190,7 +194,7 @@ func (ch *Channel) AddChild(child string) {
 func (ch *Channel) RemoveChild(child string) {
 	childCh, ok := ch.children[child]
 	if ok {
-		sendNew(ch.Parent, Exiting, nil, nil, child)
+		sendNew(ch.Parent, Exiting, nil, nil, nil, child)
 		close(childCh)
 	}
 	delete(ch.children, child)
