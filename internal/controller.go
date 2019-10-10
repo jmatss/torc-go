@@ -1,120 +1,89 @@
-// TODO: if receiving error messages from "handler", remove handler from "handlers" map
-//  since it will have shut itself down
-
 package internal
 
 import (
 	"fmt"
 	"math/rand"
+	"path/filepath"
 	"time"
 
 	"github.com/jmatss/torc/internal/torrent"
-	. "github.com/jmatss/torc/internal/util" // "com" util
+	"github.com/jmatss/torc/internal/util/com"
+	"github.com/jmatss/torc/internal/util/cons"
 )
 
-var (
-	PeerId string
-)
+func Controller(comView com.Channel, childId string) {
+	cons.DownloadPath = fetchDownloadPathFromDisk()
+	cons.PeerId = newPeerId()
 
-func Controller(clientCom ComChannel) {
-	PeerId = newPeerId()
-	var received ComMessage
+	comView.AddChild(childId)
+	defer comView.RemoveChild(childId)
 
-	// Spawn handlers. Every handler will be in charge of a specific torrent
-	// with the InfoHash of the torrent being used as the key in the "handlers" map.
-	// The "ComChannel" in the map will be used to communicate with the handlers.
-	handlers := make(map[string]ComChannel)
+	// Spawn handlers. Every handler will be in charge of a specific torrent with
+	// the InfoHash of the torrent being used as the "childId" in the com.Channel.
+	comTorrentHandler := com.New()
 	for _, tor := range fetchTorrentsFromDisk() {
-		currentHandler := createTorrentHandler(tor)
-
-		// Receive message from newly spawned handler and send it through to
-		// the "client". If the message contains an error, dont put it into
-		// the "handlers" map since the handler will have killed itself.
-		startupMsg := currentHandler.Recv()
-		if startupMsg.Error == nil {
-			infoHash := string(tor.Tracker.InfoHash[:])
-			handlers[infoHash] = currentHandler
-		}
-
-		clientCom.SendCopy(startupMsg)
+		go TorrentHandler(comTorrentHandler, tor)
 	}
 
 	for {
-		received = clientCom.Recv()
-
-		switch received.Id {
-		case Add:
-			if received.Torrent == nil {
-				clientCom.SendCopyError(
-					received,
-					fmt.Errorf("no torrent specified when trying to \"%s\"",
-						received.Id.String()),
-				)
-			}
-
-			_, ok := handlers[string(received.Torrent.Tracker.InfoHash[:])]
-			if ok {
-				clientCom.SendCopyError(
-					received,
-					fmt.Errorf("tried to add a torrent that already exists"),
-				)
-			}
-
-			infoHash := string(received.Torrent.Tracker.InfoHash[:])
-
-			handlers[infoHash] = createTorrentHandler(received.Torrent)
-			// Receive response from newly added handler and sent i through to
-			// the "client."
-			clientCom.SendCopy(handlers[infoHash].Recv())
-
-		case Delete:
-			if received.InfoHash == nil {
-				clientCom.SendCopyError(
-					received,
-					fmt.Errorf("no torrent specified when trying to \"%s\"",
-						received.Id.String()),
-				)
-			}
-
-			// Loop through and delete all specified torrents.
-			// If a specified item doesn't exist (ex. if it already has been deleted),
-			// it will be skipped and NO error will be returned.
-			for _, infoHash := range received.InfoHash {
-				if handlerCom, ok := handlers[string(infoHash[:])]; ok {
-					clientCom.SendCopy(handlerCom.SendAndRecv(Delete, nil, nil, infoHash))
+		select {
+		case received := <-comView.GetChildChannel(childId):
+			/*
+				Received message from "view"/parent.
+			*/
+			switch received.Id {
+			case com.Add:
+				if received.Torrent == nil {
+					comView.SendParent(
+						com.Failure,
+						nil,
+						fmt.Errorf("no torrent specified when trying to \"%s\"", received.Id.String()),
+						nil,
+						childId,
+					)
 				}
-			}
 
-		case Start, Stop:
-			if received.InfoHash == nil {
-				clientCom.SendCopyError(
-					received,
-					fmt.Errorf("no torrent specified when trying to \"%s\"",
-						received.Id.String()),
-				)
-			}
-
-			// Loop through and start/stop all specified torrents.
-			// If a specified item doesn't exist,
-			// it will be skipped and NO error will be returned.
-			for _, infoHash := range received.InfoHash {
-				_, ok := handlers[string(infoHash[:])]
-				if ok {
-					// TODO: CODE start/stop
+				handlerId := string(received.Torrent.Tracker.InfoHash[:])
+				if comTorrentHandler.Exists(handlerId) {
+					comView.SendParent(
+						com.Failure,
+						nil,
+						fmt.Errorf("tried to add a torrent that already exists"),
+						nil,
+						childId,
+					)
 				}
-			}
 
-			clientCom.SendCopy(received)
-		case Quit:
-			for key := range handlers {
-				resp := handlers[key].SendCopyAndRecv(received)
-				if resp.Error == nil {
-					// TODO: something went wrong, do something(?) or just ignore since
-					//  the program is quiting anyways, the handler will be killed either way
+				// TODO: Might have to do a synchronized send and receive so that
+				//  the client can be notified if it succeeded/failed immediately.
+				go TorrentHandler(comTorrentHandler, received.Torrent)
+
+			case com.Remove, com.Start, com.Stop:
+				if ok := comTorrentHandler.SendChild(received.Id, nil, nil, nil, childId); !ok {
+					comView.SendParent(
+						com.Failure,
+						nil,
+						fmt.Errorf("tried to \"%s\" non existing torrent", received.Id),
+						nil,
+						childId,
+					)
 				}
+
+			case com.Quit, com.List:
+				comTorrentHandler.SendChildren(received.Id, nil)
 			}
 
-			return
+		case received := <-comTorrentHandler.Parent:
+			/*
+				Received message from one of the "handlers"/children.
+			*/
+			switch received.Id {
+			case com.Add, com.Remove, com.Start, com.Stop, com.List:
+				// The torrentHandler has executed the commands sent from the view.
+				// Just pass along to the view so it can see the results.
+				comView.SendParentCopy(received, childId)
+
+			}
 		}
 	}
 }
@@ -142,8 +111,7 @@ func fetchTorrentsFromDisk() map[string]*torrent.Torrent {
 	return make(map[string]*torrent.Torrent, 0)
 }
 
-func createTorrentHandler(tor *torrent.Torrent) ComChannel {
-	com := NewComChannel()
-	go Handler(tor, com, PeerId)
-	return com
+// TODO: currently only returns default
+func fetchDownloadPathFromDisk() string {
+	return filepath.FromSlash("")
 }

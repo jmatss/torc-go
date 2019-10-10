@@ -1,14 +1,25 @@
 package torrent
 
 import (
+	"encoding/binary"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/jackpal/bencode-go"
+	"github.com/jmatss/torc/internal/util/cons"
 )
 
 const (
 	Port = 6881 // TODO: make list of ports instead(?) (6881-6889)
+
+	// 2^15 max according to unofficial specs.
+	// See https://wiki.theory.org/index.php/BitTorrentSpecification#Messages
+	// (section "request")
+	MaxRequestLength = 1 << 14
+	//MaxRequestLength = 1 << 15
 )
 
 // See https://wiki.theory.org/index.php/BitTorrentSpecification#Metainfo_File_Structure
@@ -23,19 +34,23 @@ type Torrent struct {
 // "Files" in single file mode is 1
 type Info struct {
 	PieceLength int64  `bencode:"piece length"`
-	Pieces      string // will consist of multiple 20-byte sha1 Pieces, might be better to split into slices
-	Name        string
+	Pieces      string // Will consist of multiple 20-byte sha1 Pieces, might be better to split into slices
+	Name        string // Is ignored; "path" in "Files" is used instead.
 	Files       []Files
 }
 
 type Files struct {
+	// Index is the start index of this file in the whole "byte stream".
+	Index  int64
 	Length int64
 	Path   []string
 }
 
-// Create and return a new Torrent struct including a Tracker struct
+// Create and return a new Torrent struct including a Tracker struct.
 func NewTorrent(filename string) (*Torrent, error) {
-	// see if file exists and is a file (rather than dir)
+	filename = filepath.FromSlash(filename)
+
+	// see if file exists
 	fileStat, err := os.Stat(filename)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get stat of %s: %w", filename, err)
@@ -53,6 +68,10 @@ func NewTorrent(filename string) (*Torrent, error) {
 	err = bencode.Unmarshal(file, torrent)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create new torrent: %w", err)
+	} else if torrent.Info.PieceLength == 0 {
+		return nil, fmt.Errorf("unable to parse piece length from torrent: %w", err)
+	} else if torrent.Info.Pieces == "" || len(torrent.Info.Pieces)%20 != 0 {
+		return nil, fmt.Errorf("unable to parse pieces from torrent: %w", err)
 	}
 
 	// Get data from the "files" field from the torrent file.
@@ -70,6 +89,164 @@ func NewTorrent(filename string) (*Torrent, error) {
 	}
 
 	return torrent, nil
+}
+
+// Writes the data received in the "piece" message to files.
+// Takes the data part of an "piece" message as input.
+//
+// Returns the amount of bytes written or an error.
+func (t *Torrent) WriteData(pieceData []byte) (int, error) {
+	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
+	begin := binary.BigEndian.Uint32(pieceData[4:8])
+	data := pieceData[8:]
+
+	if pieceIndex < 0 || pieceIndex >= uint32(len(t.Info.Pieces)/20) {
+		return 0, fmt.Errorf("piece index is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/20, pieceIndex)
+	}
+	if begin < 0 || begin >= uint32(t.Info.PieceLength) {
+		return 0, fmt.Errorf("begin is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", t.Info.PieceLength, begin)
+	}
+	if len(data) > MaxRequestLength {
+		return 0, fmt.Errorf("length is over MaxRequestLength: "+
+			"expected: <%d, got: %d", MaxRequestLength, len(data))
+	}
+
+	t.Tracker.Lock()
+	defer t.Tracker.Unlock()
+
+	// The "real" index of the whole "byte stream".
+	requestIndex := int64(pieceIndex)*t.Info.PieceLength + int64(begin)
+	var off int64 = 0
+
+	for _, file := range t.Info.Files {
+		// Skip files that have an index less than the requested start index.
+		if requestIndex < file.Index {
+			continue
+		}
+
+		path := filepath.FromSlash(cons.DownloadPath + strings.Join(file.Path, "/"))
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0444)
+		if err != nil {
+			return 0, fmt.Errorf("unable to open file %s: %w", path, err)
+		}
+
+		seekPos := requestIndex - file.Index
+		_, err = f.Seek(seekPos, 0)
+		if err != nil {
+			f.Close()
+			return 0, fmt.Errorf("unable to seek in file %s: %w", path, err)
+		}
+
+		/*
+			If true:
+			  This write will not fill the whole file.
+			  Limit the amount of bytes writen to not get a índex out of bounds
+			  when accessing the data in the "data" buffer.
+			Else:
+			  There are more data to write than there are bytes left in this file.
+			  Will continue writing the rest of the data in the next file.
+		*/
+		amountToWrite := file.Length - seekPos
+		if amountToWrite > int64(len(data)) {
+			amountToWrite = int64(len(data))
+		}
+
+		n, err := f.Write(data[off : off+amountToWrite])
+		if err != nil {
+			f.Close()
+			return 0, fmt.Errorf("unable to write data to file %s: %w", path, err)
+		}
+
+		log.Printf("%d bytes written to file %s", n, f.Name())
+
+		f.Close()
+
+		off += int64(n)
+		// All the data have been written to files, break
+		if off >= int64(len(data)) {
+			break
+		}
+	}
+
+	t.Tracker.Downloaded += int64(len(data))
+	t.Tracker.Left -= int64(len(data))
+
+	return len(data), nil
+}
+
+// Reads data that has been requested in the "request" message from disk.
+// Takes a "request" message as input.
+//
+// Returns the data or an error.
+func (t *Torrent) ReadData(request []byte) ([]byte, error) {
+	pieceIndex := binary.BigEndian.Uint32(request[:4])
+	begin := binary.BigEndian.Uint32(request[4:8])
+	length := binary.BigEndian.Uint32(request[8:])
+
+	if pieceIndex <= 0 || pieceIndex >= uint32(len(t.Info.Pieces)/20) {
+		return nil, fmt.Errorf("piece index is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/20, pieceIndex)
+	}
+	if begin <= 0 || begin >= uint32(t.Info.PieceLength) {
+		return nil, fmt.Errorf("begin is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", t.Info.PieceLength, begin)
+	}
+	if length > MaxRequestLength {
+		return nil, fmt.Errorf("length is over MaxRequestLength: "+
+			"expected: <%d, got: %d", MaxRequestLength, length)
+	}
+
+	// The "real" index of the whole "byte stream" where the remote peer wants
+	// to start reading data at. The remote peer wants "length" bytes starting
+	// from this index.
+	requestIndex := int64(pieceIndex)*t.Info.PieceLength + int64(begin)
+	data := make([]byte, length)
+	dataBuffer := data
+
+	for _, file := range t.Info.Files {
+		// Skip files that have an index less than the requested start index.
+		if requestIndex < file.Index {
+			continue
+		}
+
+		path := filepath.FromSlash(cons.DownloadPath + "/" + strings.Join(file.Path, "/"))
+		f, err := os.OpenFile(path, os.O_RDONLY, 0444)
+		if err != nil {
+			return nil, fmt.Errorf("unable to open file %s: %w", path, err)
+		}
+
+		_, err = f.Seek(requestIndex-file.Index, 0)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("unable to seek in file %s: %w", path, err)
+		}
+
+		n, err := f.Read(dataBuffer)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("unable to read data from file %s: %w", path, err)
+		}
+		f.Close()
+
+		/*
+			If true:
+			  This file didn't contain all the requested data.
+			  Continue reading data from the next file.
+			  Change "offset"/start for byte slice so that the read data from this current file
+			  doesn't get overwritten.
+			Else:
+			  All data read; break and return data to be sent to remote peer.
+		*/
+		if n < int(length) {
+			dataBuffer = dataBuffer[n:]
+		} else {
+			break
+		}
+	}
+
+	return data, nil
 }
 
 /*
@@ -122,31 +299,31 @@ func getFiles(file *os.File) ([]Files, error) {
 		/*
 			Single file torrent
 		*/
-		length, ok := lengthInterface.(int64)
-		if !ok {
-			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-				"expected \"length\" field to contain an int")
+		if length, ok := lengthInterface.(int64); ok {
+			if nameInterface, ok := infoMap["name"]; ok {
+				if name, ok := nameInterface.(string); ok {
+					// Reuse the "name" field as "path"
+					files = append(
+						files,
+						Files{
+							Index:  0,
+							Length: length,
+							Path:   []string{name},
+						},
+					)
+					return files, nil
+				}
+			}
 		}
 
-		nameInterface, ok := infoMap["name"]
-		if !ok {
-			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-				"couldn't find field \"name\"")
-		}
-
-		name, ok := nameInterface.(string)
-		if !ok {
-			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-				"expected \"name\" field to contain a string")
-		}
-
-		// Reuse the "name" field as "path"
-		files = append(files, Files{length, []string{name}})
-
+		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
+			"unable to parse the \"length\" and/or \"name\" field")
 	} else {
 		/*
 			Multiple files torrent
 		*/
+		var totalLength int64 = 0
+
 		filesInterface, ok := infoMap["files"]
 		if !ok {
 			return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
@@ -204,7 +381,16 @@ func getFiles(file *os.File) ([]Files, error) {
 				path = append(path, pathString)
 			}
 
-			files = append(files, Files{length, path})
+			files = append(
+				files,
+				Files{
+					Index:  totalLength,
+					Length: length,
+					Path:   path,
+				},
+			)
+
+			totalLength += length
 		}
 	}
 
@@ -220,23 +406,13 @@ func getInfoMap(file *os.File) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("unable to bencode decode torrent file: %w", err)
 	}
 
-	torrentMap, ok := torrentInterface.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-			"expected file to be wrapped in map")
+	if torrentMap, ok := torrentInterface.(map[string]interface{}); ok {
+		if infoInterface, ok := torrentMap["info"]; ok {
+			if infoMap, ok := infoInterface.(map[string]interface{}); ok {
+				return infoMap, nil
+			}
+		}
 	}
-
-	infoInterface, ok := torrentMap["info"]
-	if !ok {
-		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-			"couldn't find field \"info\"")
-	}
-
-	infoMap, ok := infoInterface.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
-			"expected \"info\" field to contain a map")
-	}
-
-	return infoMap, nil
+	return nil, fmt.Errorf("bencoded torrent file incorrect format: " +
+		"unable to parse the \"info\" field")
 }

@@ -5,17 +5,20 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	Protocol            = "tcp"
-	Timeout             = 5 * time.Second
-	HandshakeBufferSize = 1 << 7 // arbitrary size
+	Protocol         = "tcp"
+	HandshakeTimeout = 5 * time.Second
+)
 
+const (
 	// The KeepAlive message doesn't have an id,
 	//  set to -1 so that it still can be distinguished.
 	KeepAlive MessageId = iota - 1
@@ -55,10 +58,13 @@ func (id MessageId) String() string {
 }
 
 type Peer struct {
-	UsingIp  bool
-	Ip       net.IP
-	Hostname string
-	Port     int64
+	sync.RWMutex
+
+	UsingIp     bool
+	Ip          net.IP
+	Hostname    string
+	Port        int64
+	HostAndPort string
 
 	Connection     net.Conn
 	RemoteBitField []byte
@@ -90,7 +96,14 @@ func NewPeer(ipString string, port int64) Peer {
 	} else {
 		peer.UsingIp = true
 		peer.Ip = ip
+
+		// ip.To4 will return nil if it isn't a valid IPv4 address,
+		// assume it is a IPv6 address
+		if ip.To4() == nil {
+			ipString = "[" + ipString + "]"
+		}
 	}
+	peer.HostAndPort = ipString + ":" + strconv.Itoa(int(port))
 
 	return peer
 }
@@ -99,21 +112,6 @@ func NewPeer(ipString string, port int64) Peer {
 // https://wiki.theory.org/index.php/BitTorrentSpecification#Handshake
 // Initiates a handshake with the peer.
 func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, error) {
-	var remote string
-	port := strconv.Itoa(int(p.Port))
-
-	if p.UsingIp {
-		ip := p.Ip.String()
-		if strings.Contains(ip, ":") {
-			// Assume IP containing colon is IPv6, need to wrap inside square brackets
-			ip = "[" + ip + "]"
-		}
-
-		remote = ip + ":" + port
-	} else {
-		remote = p.Hostname + ":" + port
-	}
-
 	// handshake: <pstrlen><pstr><reserved><info_hash><peer_id>
 	// See specification link at top of function for more info
 	dataLength := 1 + PStrLen + 8 + len(infoHash) + len(peerId)
@@ -130,18 +128,18 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 			"expected: %d, got: %d", dataLength, len(data))
 	}
 
-	conn, err := net.Dial(Protocol, remote)
+	conn, err := net.Dial(Protocol, p.HostAndPort)
+	if err != nil {
+		return nil, fmt.Errorf("unable to establish connection to "+
+			"%s: %w", p.HostAndPort, err)
+	}
 	defer func() {
-		if conn != nil {
+		if err != nil {
 			conn.Close()
 		}
 	}()
-	if err != nil {
-		return nil, fmt.Errorf("unable to establish connection to "+
-			"%s: %w", remote, err)
-	}
 
-	err = conn.SetDeadline(time.Now().Add(Timeout))
+	err = conn.SetDeadline(time.Now().Add(HandshakeTimeout))
 	if err != nil {
 		return nil, fmt.Errorf("unable to set deadline for connection to "+
 			"%s: %w", conn.RemoteAddr().String(), err)
@@ -149,34 +147,52 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 
 	n, err := conn.Write(data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to send handshake message: %w", err)
 	} else if n != len(data) {
 		return nil, fmt.Errorf("data sent during handshake incorrect size, "+
 			"expected: %d, got: %d", len(data), n)
 	}
 
-	response := make([]byte, HandshakeBufferSize)
+	// The handshake message is 49+len(pstr) bytes.
+	// len(pstr) is stored in the first byte.
+	lenpstrByte := make([]byte, 1)
+	n, err = conn.Read(lenpstrByte)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read handshake message: %w", err)
+	} else if n != len(lenpstrByte) {
+		return nil, fmt.Errorf("unable to read the first byte from remote (len(pstr))")
+	}
+	lenpstr := int(lenpstrByte[0])
+
+	// Read rest of handshake response
+	response := make([]byte, 49+lenpstr-1)
 	n, err = conn.Read(response)
 	if err != nil {
-		return nil, err
-	} else if minLength := 1 + 0 + 8 + len(infoHash) + len(peerId); n < minLength {
-		return nil, fmt.Errorf("remote peer %s sent less than minimum bytes "+
-			"during handshake, expected >%d, got: %d",
-			conn.RemoteAddr().String(), minLength, n)
+		return nil, fmt.Errorf("unable to read handshake message: %w", err)
+	} else if n != len(response) {
+		return nil, fmt.Errorf("unexpected amount of bytes read from remote during "+
+			"handshake. expected: %d, got: %d", len(response), n)
 	}
 
-	// handshake: <pstrlen><pstr><reserved><info_hash><peer_id>
-	pstrlen := int(response[0])
-	// ignore pstr and reserved
-	start := 1 + pstrlen + len(Reserved)
-	end := 1 + pstrlen + len(Reserved) + len(infoHash)
+	// Received handshake format: <pstrlen><pstr><reserved><info_hash><peer_id>
+	// Ignoring pstr, reserved & peerid, only interested in infoHash
+	start := lenpstr + len(Reserved)
+	end := lenpstr + len(Reserved) + len(infoHash)
 	remoteInfoHash := response[start:end]
-	// ignore peerid
 
 	if !bytes.Equal(remoteInfoHash, infoHash[:]) {
 		return nil, fmt.Errorf("received incorrect hash id from remote %s, "+
 			"expected: %040x, got: %040x", conn.RemoteAddr().String(), infoHash, remoteInfoHash)
 	}
+
+	// Unset deadline, it was only for handshake
+	err = conn.SetDeadline(time.Time{})
+	if err != nil {
+		return nil, fmt.Errorf("unable to set deadline for connection to "+
+			"%s: %w", conn.RemoteAddr().String(), err)
+	}
+
+	log.Printf("Peer handshake done")
 
 	return conn, nil
 }
@@ -234,7 +250,7 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		}
 
 		lenPrefix := 13
-		data := make([]byte, 4+lenPrefix)
+		data = make([]byte, 4+lenPrefix)
 
 		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
 		binary.BigEndian.PutUint32(data[5:9], uint32(input[0]))  // index
@@ -243,6 +259,8 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 	default:
 		return fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
+
+	log.Printf("Sent to %s - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -268,6 +286,8 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
 	data = append(data, payload...)
 
+	log.Printf("Sent data to %s: - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
+
 	n, err := p.Connection.Write(data)
 	if err != nil {
 		return err
@@ -288,6 +308,7 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	// Read the "header" i.e. the first five bytes containing payload length and MessageId
 	header := make([]byte, 5)
 	n, err := p.Connection.Read(header)
+
 	if err != nil {
 		return 0, nil, err
 	} else if n == 4 { // Assume this is a keep alive message
@@ -300,50 +321,40 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	dataLen := binary.BigEndian.Uint32(header[:4]) - 1 // -1 to "remove" len of messageId
 	messageId := MessageId(int(header[4]))
 
-	var data []byte
-	if dataLen > 0 {
-		data = make([]byte, dataLen)
-		n, err = p.Connection.Read(data)
-		if err != nil {
-			return 0, nil, err
-		} else if n != int(dataLen) {
-			return 0, nil, fmt.Errorf("incorrect amount of data (excl. header) received from "+
-				"remote peer %s, expected: %d, got: %d", p.Connection.RemoteAddr().String(), dataLen, n)
-		}
+	if dataLen > MaxRequestLength*2 { // arbitrary value
+		return 0, nil, fmt.Errorf("peer sent to many bytes, expected: >=%d, got: %d",
+			MaxRequestLength, dataLen)
 	}
 
-	switch messageId {
-	case KeepAlive:
-		// TODO: Nothing to do atm, might need to add functionality later
-		// This case will never be true
-	case Choke:
-		p.PeerChoking = true
-	case UnChoke:
-		p.PeerChoking = false
-	case Interested:
-		p.PeerInterested = true
-	case NotInterested:
-		p.PeerInterested = false
-	case Have:
-		// Remote peer indicates that it has just received the piece with the index "pieceIndex".
-		// Update the "RemoteBitField" in this peer struct by OR:ing in a 1 at the correct index.
-		pieceIndex := binary.BigEndian.Uint32(data)
-		byteShift := pieceIndex / 8
-		bitShift := 8 - (pieceIndex % 8) // bits are stored in "reverse"
-		if int(byteShift) > len(p.RemoteBitField) {
-			return 0, nil, fmt.Errorf("the remote peer has specified a piece index " +
-				"that is to big to fit in it's bitfield")
+	log.Printf("Recv from %s - header: 0x%x, datalen: %d, id: %s",
+		p.Connection.RemoteAddr().String(), header[0:5], dataLen, messageId.String())
+
+	data := make([]byte, dataLen)
+	off := 0
+	if dataLen > 0 {
+		for off < int(dataLen) {
+			n, err = p.Connection.Read(data[off:])
+			if err != nil {
+				return 0, nil, err
+			}
+			off += n
 		}
-		p.RemoteBitField[byteShift] |= 1 << bitShift
-	case Request:
-		// TODO: Nothing to do atm, might need to add functionality later
-	case Piece:
-		// TODO: Nothing to do atm, might need to add functionality later
-	case Cancel:
-		// TODO: Nothing to do atm, might need to add functionality later
-	default:
-		return 0, nil, fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
 
 	return messageId, data, nil
+}
+
+// Compares the IP/hostname of the peer.
+// Will return false if a host has changed from using a hostname, IPv4 or IPv6 to one of the other,
+// i.e. dns.google and 8.8.8.8 might be the same host, but this function will return false.
+func (p *Peer) Equal(other *Peer) bool {
+	if p.UsingIp != other.UsingIp { // "xor"
+		return false
+	}
+
+	if p.UsingIp {
+		return p.Ip.Equal(other.Ip)
+	} else {
+		return strings.ToLower(p.Hostname) == strings.ToLower(other.Hostname)
+	}
 }

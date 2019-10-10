@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/jackpal/bencode-go"
@@ -39,11 +40,21 @@ func (id EventId) String() string {
 }
 
 type Tracker struct {
+	sync.Mutex
+
 	InfoHash   [sha1.Size]byte
 	Uploaded   int64
 	Downloaded int64
 	Left       int64
-	BitField   []byte
+
+	// Contains the bitfield of the pieces that this client have downloaded
+	// and can be seeded to other clients.
+	BitFieldHave []byte
+
+	// Contains the bitfield of the pieces that this client have downloaded
+	// and also the pieces that the peerHandlers are currently downloading.
+	// This can be used to see which pieces that are free to start downloading.
+	BitFieldDownloading []byte
 
 	Started   bool
 	Completed bool
@@ -56,7 +67,7 @@ type Tracker struct {
 
 // Creates a new tracker struct that will contain anything tracker related
 // including all peers.
-func NewTracker(torrent *Torrent, file *os.File) error {
+func NewTracker(tor *Torrent, file *os.File) error {
 	tracker := Tracker{}
 
 	content, err := ioutil.ReadAll(file)
@@ -75,19 +86,25 @@ func NewTracker(torrent *Torrent, file *os.File) error {
 	tracker.InfoHash = sha1.Sum(info)
 
 	var left int64 = 0
-	for _, file := range torrent.Info.Files {
+	for _, file := range tor.Info.Files {
 		left += file.Length
 	}
 	tracker.Left = left
 
-	// bitfield initialized to all zeros
-	bitFieldLength := ((len(torrent.Info.Files) - 1) / 8) + 1
-	tracker.BitField = make([]byte, bitFieldLength)
+	// Pieces will be divisible by 20
+	// Bitfield initialized to all zeros
+	bitFieldLength := ((len(tor.Info.Pieces) / 20) / 8) + 1
+	tracker.BitFieldHave = make([]byte, bitFieldLength)
+	tracker.BitFieldDownloading = make([]byte, bitFieldLength)
+	for i := 0; i < bitFieldLength; i++ {
+		tracker.BitFieldHave[i] = 0
+		tracker.BitFieldDownloading[i] = 0
+	}
 
 	// Uploaded, Downloaded, Interval, Seeders and Leecehers initialized to 0
 	// Started and Completed initialized to false
 	// Peers initialized to nil
-	torrent.Tracker = tracker
+	tor.Tracker = tracker
 
 	return nil
 }
@@ -181,14 +198,38 @@ func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 	err = bencode.Unmarshal(bytes.NewReader(body), &t.Tracker)
 	if err != nil {
 		return fmt.Errorf("unable to unmarshal the response body into "+
-			"the tracker: %w", err)
+			"the tracker struct: %w", err)
+	} else if t.Tracker.Interval <= 0 {
+		return fmt.Errorf("received tracker response has interval time "+
+			"less than or equal zero", err)
 	}
 
 	peers, err := getPeers(body)
 	if err != nil {
 		return err
 	}
-	t.Tracker.Peers = peers
+
+	// If true: first "contact" with the tracker, i.e. all received peers are new,
+	//	        add all of them to the the tracker struct.
+	// Else: append all new peers that doesn't already exist in the "old" peers
+	if t.Tracker.Peers == nil {
+		t.Tracker.Peers = peers
+	} else {
+		var alreadyExists bool
+		for _, newPeer := range peers {
+			alreadyExists = false
+			for _, oldPeer := range t.Tracker.Peers {
+				if oldPeer.Equal(&newPeer) {
+					alreadyExists = true
+					break
+				}
+			}
+
+			if !alreadyExists {
+				t.Tracker.Peers = append(t.Tracker.Peers, newPeer)
+			}
+		}
+	}
 
 	return nil
 }
