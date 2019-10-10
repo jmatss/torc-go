@@ -5,6 +5,7 @@ package com
 import (
 	"fmt"
 	"github.com/jmatss/torc/internal/torrent"
+	"sync"
 )
 
 const (
@@ -61,6 +62,8 @@ type Message struct {
 // "Parent" is the channel that the children sends to and the parent receives on.
 // "children" is a map of channels for every child that the parent can send to.
 type Channel struct {
+	mut sync.RWMutex
+
 	Parent   chan Message
 	children map[string]chan Message
 }
@@ -93,6 +96,9 @@ func (ch *Channel) SendChild(
 	torrent *torrent.Torrent,
 	child string,
 ) bool {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
 	childCh, ok := ch.children[child]
 	if !ok {
 		return false
@@ -104,6 +110,9 @@ func (ch *Channel) SendChild(
 
 // Sends a message to all children.
 func (ch *Channel) SendChildren(id Id, data []byte) {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
 	for child, childCh := range ch.children {
 		sendNew(childCh, id, data, nil, nil, child)
 	}
@@ -112,6 +121,9 @@ func (ch *Channel) SendChildren(id Id, data []byte) {
 // Same as SendParent but a copy of a Message is sent.
 // Modifies the Child field inside the message.
 func (ch *Channel) SendParentCopy(msg Message, child string) bool {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
 	_, ok := ch.children[child]
 	if !ok {
 		return false
@@ -125,6 +137,9 @@ func (ch *Channel) SendParentCopy(msg Message, child string) bool {
 // Same as SendChild but a copy of a Message is sent.
 // Modifies the Child field inside the message.
 func (ch *Channel) SendChildCopy(msg Message, child string) bool {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
 	childCh, ok := ch.children[child]
 	if !ok {
 		return false
@@ -162,10 +177,14 @@ func (ch *Channel) RecvParent() Message {
 }
 
 func (ch *Channel) RecvChild(child string) (Message, error) {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
 	childCh, ok := ch.children[child]
 	if !ok {
 		return Message{}, fmt.Errorf("the specified Child doesn't exists in this channel")
 	}
+
 	return recv(childCh), nil
 }
 
@@ -175,28 +194,41 @@ func recv(ch chan Message) Message {
 
 // See if the specified child has an open channel.
 func (ch *Channel) Exists(child string) bool {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
 	_, ok := ch.children[child]
 	return ok
 }
 
 func (ch *Channel) CountChildren() int {
+	ch.mut.Lock()
+	defer ch.mut.Unlock()
+
 	return len(ch.children)
 }
 
 // Adds a child channel to this Channel. The child will add itself so that
 // it can receive messages from the parent.
 func (ch *Channel) AddChild(child string) {
+	ch.mut.Lock()
+	defer ch.mut.Unlock()
+
 	ch.children[child] = make(chan Message, ChanSize)
 }
 
 // Removes the channel for this child. Should be called when this child
 // stops running (for example in a defer for the child go process).
 func (ch *Channel) RemoveChild(child string) {
+	ch.mut.Lock()
+	defer ch.mut.Unlock()
+
 	childCh, ok := ch.children[child]
 	if ok {
 		sendNew(ch.Parent, Exiting, nil, nil, nil, child)
 		close(childCh)
 	}
+
 	delete(ch.children, child)
 }
 
@@ -204,9 +236,13 @@ func (ch *Channel) RemoveChild(child string) {
 // A nil channel is returned if the child doesn't exists.
 // The nil channel always blocks, so it will never be matched in a Select-statement.
 func (ch *Channel) GetChildChannel(child string) chan Message {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
 	childCh, ok := ch.children[child]
 	if !ok {
 		return nil
 	}
+
 	return childCh
 }
