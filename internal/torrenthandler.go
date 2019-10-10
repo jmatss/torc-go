@@ -136,7 +136,7 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 			}
 
 			// Reset timer
-			intervalTimer = time.NewTimer(time.Duration(tor.Tracker.Interval))
+			intervalTimer = time.NewTimer(time.Duration(tor.Tracker.Interval) * time.Second)
 		}
 	}
 
