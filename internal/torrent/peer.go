@@ -5,17 +5,20 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	Protocol            = "tcp"
-	Timeout             = 5 * time.Second
-	HandshakeBufferSize = 1 << 7 // arbitrary size
+	Protocol         = "tcp"
+	HandshakeTimeout = 5 * time.Second
+)
 
+const (
 	// The KeepAlive message doesn't have an id,
 	//  set to -1 so that it still can be distinguished.
 	KeepAlive MessageId = iota - 1
@@ -55,6 +58,8 @@ func (id MessageId) String() string {
 }
 
 type Peer struct {
+	sync.RWMutex
+
 	UsingIp     bool
 	Ip          net.IP
 	Hostname    string
@@ -124,17 +129,17 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 	}
 
 	conn, err := net.Dial(Protocol, p.HostAndPort)
-	defer func() {
-		if conn != nil {
-			conn.Close()
-		}
-	}()
 	if err != nil {
 		return nil, fmt.Errorf("unable to establish connection to "+
 			"%s: %w", p.HostAndPort, err)
 	}
+	defer func() {
+		if err != nil {
+			conn.Close()
+		}
+	}()
 
-	err = conn.SetDeadline(time.Now().Add(Timeout))
+	err = conn.SetDeadline(time.Now().Add(HandshakeTimeout))
 	if err != nil {
 		return nil, fmt.Errorf("unable to set deadline for connection to "+
 			"%s: %w", conn.RemoteAddr().String(), err)
@@ -142,34 +147,52 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 
 	n, err := conn.Write(data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to send handshake message: %w", err)
 	} else if n != len(data) {
 		return nil, fmt.Errorf("data sent during handshake incorrect size, "+
 			"expected: %d, got: %d", len(data), n)
 	}
 
-	response := make([]byte, HandshakeBufferSize)
+	// The handshake message is 49+len(pstr) bytes.
+	// len(pstr) is stored in the first byte.
+	lenpstrByte := make([]byte, 1)
+	n, err = conn.Read(lenpstrByte)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read handshake message: %w", err)
+	} else if n != len(lenpstrByte) {
+		return nil, fmt.Errorf("unable to read the first byte from remote (len(pstr))")
+	}
+	lenpstr := int(lenpstrByte[0])
+
+	// Read rest of handshake response
+	response := make([]byte, 49+lenpstr-1)
 	n, err = conn.Read(response)
 	if err != nil {
-		return nil, err
-	} else if minLength := 1 + 0 + 8 + len(infoHash) + len(peerId); n < minLength {
-		return nil, fmt.Errorf("remote peer %s sent less than minimum bytes "+
-			"during handshake, expected >%d, got: %d",
-			conn.RemoteAddr().String(), minLength, n)
+		return nil, fmt.Errorf("unable to read handshake message: %w", err)
+	} else if n != len(response) {
+		return nil, fmt.Errorf("unexpected amount of bytes read from remote during "+
+			"handshake. expected: %d, got: %d", len(response), n)
 	}
 
-	// handshake: <pstrlen><pstr><reserved><info_hash><peer_id>
-	pstrlen := int(response[0])
-	// ignore pstr and reserved
-	start := 1 + pstrlen + len(Reserved)
-	end := 1 + pstrlen + len(Reserved) + len(infoHash)
+	// Received handshake format: <pstrlen><pstr><reserved><info_hash><peer_id>
+	// Ignoring pstr, reserved & peerid, only interested in infoHash
+	start := lenpstr + len(Reserved)
+	end := lenpstr + len(Reserved) + len(infoHash)
 	remoteInfoHash := response[start:end]
-	// ignore peerid
 
 	if !bytes.Equal(remoteInfoHash, infoHash[:]) {
 		return nil, fmt.Errorf("received incorrect hash id from remote %s, "+
 			"expected: %040x, got: %040x", conn.RemoteAddr().String(), infoHash, remoteInfoHash)
 	}
+
+	// Unset deadline, it was only for handshake
+	err = conn.SetDeadline(time.Time{})
+	if err != nil {
+		return nil, fmt.Errorf("unable to set deadline for connection to "+
+			"%s: %w", conn.RemoteAddr().String(), err)
+	}
+
+	log.Printf("Peer handshake done")
 
 	return conn, nil
 }
@@ -227,7 +250,7 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		}
 
 		lenPrefix := 13
-		data := make([]byte, 4+lenPrefix)
+		data = make([]byte, 4+lenPrefix)
 
 		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
 		binary.BigEndian.PutUint32(data[5:9], uint32(input[0]))  // index
@@ -236,6 +259,8 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 	default:
 		return fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
+
+	log.Printf("Sent to %s - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -261,6 +286,8 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
 	data = append(data, payload...)
 
+	log.Printf("Sent data to %s: - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
+
 	n, err := p.Connection.Write(data)
 	if err != nil {
 		return err
@@ -281,6 +308,7 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	// Read the "header" i.e. the first five bytes containing payload length and MessageId
 	header := make([]byte, 5)
 	n, err := p.Connection.Read(header)
+
 	if err != nil {
 		return 0, nil, err
 	} else if n == 4 { // Assume this is a keep alive message
@@ -293,15 +321,23 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 	dataLen := binary.BigEndian.Uint32(header[:4]) - 1 // -1 to "remove" len of messageId
 	messageId := MessageId(int(header[4]))
 
-	var data []byte = nil
+	if dataLen > MaxRequestLength*2 { // arbitrary value
+		return 0, nil, fmt.Errorf("peer sent to many bytes, expected: >=%d, got: %d",
+			MaxRequestLength, dataLen)
+	}
+
+	log.Printf("Recv from %s - header: 0x%x, datalen: %d, id: %s",
+		p.Connection.RemoteAddr().String(), header[0:5], dataLen, messageId.String())
+
+	data := make([]byte, dataLen)
+	off := 0
 	if dataLen > 0 {
-		data = make([]byte, dataLen)
-		n, err = p.Connection.Read(data)
-		if err != nil {
-			return 0, nil, err
-		} else if n != int(dataLen) {
-			return 0, nil, fmt.Errorf("incorrect amount of data (excl. header) received from "+
-				"remote peer %s, expected: %d, got: %d", p.Connection.RemoteAddr().String(), dataLen, n)
+		for off < int(dataLen) {
+			n, err = p.Connection.Read(data[off:])
+			if err != nil {
+				return 0, nil, err
+			}
+			off += n
 		}
 	}
 
