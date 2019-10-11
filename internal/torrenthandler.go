@@ -22,7 +22,9 @@ const (
 func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 	childId := string(tor.Tracker.InfoHash[:])
 
-	log.Printf("TorrentHandler started")
+	if cons.Logging == cons.Low {
+		log.Printf("TorrentHandler started")
+	}
 
 	// Make tracker request. This handler will kill itself if it isn't able to
 	// complete the tracker request.
@@ -34,7 +36,9 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 	comController.AddChild(childId)
 	defer comController.RemoveChild(childId)
 
-	log.Printf("TorrentHandler tracker request done successfully")
+	if cons.Logging == cons.High {
+		log.Printf("TorrentHandler tracker request done successfully")
+	}
 
 	// Start up peerHandlers. Every peer handler will be in charge of one peer
 	// of this torrent.
@@ -122,10 +126,14 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 			}
 
 		case <-intervalTimer.C:
-			log.Printf("TorrentHandler interval timeout")
 			/*
 				Interval time expired. Send new tracker request to get updated information.
 			*/
+
+			if cons.Logging == cons.High {
+				log.Printf("TorrentHandler interval timeout")
+			}
+
 			if err := tor.Request(cons.PeerId); err != nil {
 				retryCount++
 				if retryCount >= MaxRetryCount {
@@ -139,7 +147,7 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 			}
 
 			// Reset timer
-			intervalTimer = time.NewTimer(time.Duration(tor.Tracker.Interval))
+			intervalTimer = time.NewTimer(time.Duration(tor.Tracker.Interval) * time.Second)
 		}
 	}
 

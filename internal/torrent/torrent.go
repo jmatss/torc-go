@@ -159,7 +159,9 @@ func (t *Torrent) WriteData(pieceData []byte) (int, error) {
 			return 0, fmt.Errorf("unable to write data to file %s: %w", path, err)
 		}
 
-		log.Printf("%d bytes written to file %s", n, f.Name())
+		if cons.Logging == cons.High {
+			log.Printf("%d bytes written to file %s", n, f.Name())
+		}
 
 		f.Close()
 
