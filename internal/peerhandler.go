@@ -25,14 +25,18 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 	// complete the handshake.
 	conn, err := peer.Handshake(cons.PeerId, tor.Tracker.InfoHash)
 	if err != nil {
-		log.Printf("PeerHandler handshake failure!: %w", err)
+		if cons.Logging == cons.High {
+			log.Printf("PeerHandler handshake failure!: %w", err)
+		}
 		comTorrentHandler.SendParent(com.TotalFailure, nil, err, nil, childId)
 		return
 	}
 	peer.Connection = conn
 	defer func() {
 		peer.Connection.Close()
-		log.Printf("PeerHandler exiting")
+		if cons.Logging == cons.High {
+			log.Printf("PeerHandler exiting")
+		}
 	}()
 
 	comTorrentHandler.SendParent(com.Success, nil, nil, nil, childId)
@@ -73,7 +77,9 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 			// The receiver of the message over the "readChannel" can check and see that
 			// "Err" is set, and figure out that this go process is dead.
 			if err != nil {
-				log.Printf("read func exiting, err: %v", err)
+				if cons.Logging == cons.High {
+					log.Printf("read func exiting, err: %v", err)
+				}
 				return
 			}
 		}
@@ -102,6 +108,11 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 			// Kills itself if it receives an error
 			if received.Err != nil {
 				comTorrentHandler.SendParent(com.TotalFailure, nil, err, nil, childId)
+
+				// TODO: need to kill downloader, do this in a better way
+				if received.Id == torrent.Piece {
+					downloadChannel <- received
+				}
 				return
 			}
 
@@ -188,17 +199,19 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 // Download pieces from this remote peer.
 func downloader(
 	comTorrentHandler com.Channel,
-	receiveChan chan remoteDTO,
+	downloadChannel chan remoteDTO,
 	t *torrent.Torrent,
 	p *torrent.Peer,
 ) {
 	for {
-		pieceIndex, err := downloadPiece(receiveChan, t, p)
+		pieceIndex, err := downloadPiece(downloadChannel, t, p)
 		if err != nil {
 			return
 		}
 
-		log.Printf("piece %d downloaded", pieceIndex)
+		if cons.Logging == cons.High {
+			log.Printf("piece %d downloaded", pieceIndex)
+		}
 
 		// Send have message to torrentHandler to let it now that a new piece is downloaded
 		// and a Have message can be sent to all peers.
@@ -208,7 +221,7 @@ func downloader(
 	}
 }
 
-func downloadPiece(receiveChan chan remoteDTO, t *torrent.Torrent, p *torrent.Peer) (int, error) {
+func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torrent.Peer) (int, error) {
 	pieceIndex, err := findFreePieceIndex(t, p)
 	if err != nil {
 		return -1, err
@@ -258,11 +271,16 @@ func downloadPiece(receiveChan chan remoteDTO, t *torrent.Torrent, p *torrent.Pe
 			// Loop forever until the remote peer un chokes this client and this client
 			// receives a "piece" message
 			if p.PeerChoking {
-				received = <-receiveChan
+				received = <-downloadChannel
+				if received.Err != nil {
+					return -1, received.Err
+				}
 			} else {
 				p.Send(torrent.Request, pieceIndex, begin, requestLength)
-				received = <-receiveChan
-				if received.Id == torrent.Piece {
+				received = <-downloadChannel
+				if received.Err != nil {
+					return -1, received.Err
+				} else if received.Id == torrent.Piece {
 					break
 				}
 			}
@@ -270,7 +288,9 @@ func downloadPiece(receiveChan chan remoteDTO, t *torrent.Torrent, p *torrent.Pe
 
 		_, err := t.WriteData(received.Data)
 		if err != nil {
-			log.Printf("error writing to file: %v", err)
+			if cons.Logging == cons.Low {
+				log.Printf("error writing to file: %v", err)
+			}
 		}
 
 		begin += requestLength
