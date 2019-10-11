@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"github.com/jmatss/torc/internal/util/cons"
 	"log"
 	"net"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 const (
 	Protocol         = "tcp"
 	HandshakeTimeout = 5 * time.Second
+	Timeout          = 2 * time.Minute
 )
 
 const (
@@ -185,14 +187,15 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 			"expected: %040x, got: %040x", conn.RemoteAddr().String(), infoHash, remoteInfoHash)
 	}
 
-	// Unset deadline, it was only for handshake
-	err = conn.SetDeadline(time.Time{})
+	err = conn.SetDeadline(time.Now().Add(Timeout))
 	if err != nil {
 		return nil, fmt.Errorf("unable to set deadline for connection to "+
 			"%s: %w", conn.RemoteAddr().String(), err)
 	}
 
-	log.Printf("Peer handshake done")
+	if cons.Logging == cons.High {
+		log.Printf("Peer handshake done")
+	}
 
 	return conn, nil
 }
@@ -260,7 +263,9 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		return fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
 
-	log.Printf("Sent to %s - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
+	if cons.Logging == cons.High {
+		log.Printf("Sent to %s - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
+	}
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -286,7 +291,9 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
 	data = append(data, payload...)
 
-	log.Printf("Sent data to %s: - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
+	if cons.Logging == cons.High {
+		log.Printf("Sent data to %s: - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
+	}
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -305,6 +312,13 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 // Packet format: <length prefix><message ID><payload>
 // Where <length prefix> is 4 bytes, <message ID> is 1 byte and <payload> is variable length.
 func (p *Peer) Recv() (MessageId, []byte, error) {
+	// Reset deadline
+	err := p.Connection.SetDeadline(time.Now().Add(Timeout))
+	if err != nil {
+		return -1, nil, fmt.Errorf("unable to set deadline for connection to "+
+			"%s: %w", p.Connection.RemoteAddr().String(), err)
+	}
+
 	// Read the "header" i.e. the first five bytes containing payload length and MessageId
 	header := make([]byte, 5)
 	n, err := p.Connection.Read(header)
@@ -326,8 +340,10 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 			MaxRequestLength, dataLen)
 	}
 
-	log.Printf("Recv from %s - header: 0x%x, datalen: %d, id: %s",
-		p.Connection.RemoteAddr().String(), header[0:5], dataLen, messageId.String())
+	if cons.Logging == cons.High {
+		log.Printf("Recv from %s - header: 0x%x, datalen: %d, id: %s",
+			p.Connection.RemoteAddr().String(), header[0:5], dataLen, messageId.String())
+	}
 
 	data := make([]byte, dataLen)
 	off := 0
