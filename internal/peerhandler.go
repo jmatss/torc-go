@@ -273,7 +273,7 @@ func downloadPiece(receiveChan chan remoteDTO, t *torrent.Torrent, p *torrent.Pe
 			log.Printf("error writing to file: %v", err)
 		}
 
-		begin += torrent.MaxRequestLength
+		begin += requestLength
 	}
 
 	return pieceIndex, nil
