@@ -36,6 +36,7 @@ func main() {
 				log.Printf("leechers: %d\n", received.Torrent.Tracker.Leechers)
 				log.Printf("downloaded: %d\n", received.Torrent.Tracker.Downloaded)
 				log.Printf("uploaded: %d\n", received.Torrent.Tracker.Uploaded)
+				log.Printf("bitfield: %v\n\n", received.Torrent.Tracker.BitFieldHave)
 			}
 		}
 	}()
@@ -69,9 +70,7 @@ func main() {
 			}
 
 			ok := comController.SendChild(com.Add, nil, nil, tor, controllerId)
-			if ok {
-				log.Println("Add sent")
-			} else {
+			if !ok {
 				log.Println("Unable to Add")
 				log.Printf("Count: %d\n", comController.CountChildren())
 				log.Printf("Exists: %v\n", comController.Exists(controllerId))
