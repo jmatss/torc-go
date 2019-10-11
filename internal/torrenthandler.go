@@ -72,7 +72,10 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 						childId,
 					)
 				} else {
-					for _, peer := range tor.Tracker.Peers {
+					for i, peer := range tor.Tracker.Peers {
+						if i >= MaxPeers {
+							break
+						}
 						go PeerHandler(comPeerHandler, &peer, tor)
 					}
 					comController.SendParent(received.Id, nil, nil, nil, childId)
