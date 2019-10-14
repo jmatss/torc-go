@@ -41,6 +41,7 @@ func Controller(comView com.Channel, childId string) {
 						nil,
 						childId,
 					)
+					break
 				}
 
 				handlerId := string(received.Torrent.Tracker.InfoHash[:])
@@ -52,6 +53,7 @@ func Controller(comView com.Channel, childId string) {
 						nil,
 						childId,
 					)
+					break
 				}
 
 				// TODO: Might have to do a synchronized send and receive so that
@@ -59,6 +61,7 @@ func Controller(comView com.Channel, childId string) {
 				go TorrentHandler(comTorrentHandler, received.Torrent)
 
 			case com.Remove, com.Start, com.Stop:
+				// TODO: Fix this, must send correct child id (InfoHash).
 				if ok := comTorrentHandler.SendChild(received.Id, nil, nil, nil, childId); !ok {
 					comView.SendParent(
 						com.Failure,

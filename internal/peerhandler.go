@@ -269,7 +269,9 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 
 		for {
 			// Loop forever until the remote peer un chokes this client and this client
-			// receives a "piece" message
+			// receives a "piece" message.
+			// TODO: will never continue from here if this client doesn't receive a
+			//  unchoke. Implement timeout.
 			if p.PeerChoking {
 				received = <-downloadChannel
 				if received.Err != nil {
@@ -286,6 +288,7 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 			}
 		}
 
+		// TODO: verify that the sha1 hash of the piece is correct
 		_, err := t.WriteData(received.Data)
 		if err != nil {
 			if cons.Logging == cons.Low {
