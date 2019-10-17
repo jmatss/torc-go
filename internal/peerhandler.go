@@ -288,12 +288,18 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 			}
 		}
 
-		// TODO: verify that the sha1 hash of the piece is correct
+		if !t.IsCorrectPiece(received.Data) {
+			if cons.Logging == cons.Low {
+				log.Printf("received incorrect piece from remote peer")
+			}
+			return 0, fmt.Errorf("the received piece's sha1 hash is incorrect")
+		}
 		_, err := t.WriteData(received.Data)
 		if err != nil {
 			if cons.Logging == cons.Low {
 				log.Printf("error writing to file: %v", err)
 			}
+			return 0, fmt.Errorf("unable to write to file: %v", err)
 		}
 
 		begin += requestLength

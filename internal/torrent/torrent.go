@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -249,6 +250,21 @@ func (t *Torrent) ReadData(request []byte) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// Verifies the data received from the remote peer is the data that was requested.
+// Compares the sha1 hash of the received data to the sha1 given from the tracker.
+func (t *Torrent) IsCorrectPiece(pieceData []byte) bool {
+	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
+
+	receivedHash := sha1.Sum(pieceData)
+	realHash := t.Info.Pieces[pieceIndex*20 : pieceIndex*20+20]
+
+	if string(receivedHash[:]) == realHash {
+		return true
+	} else {
+		return false
+	}
 }
 
 /*
