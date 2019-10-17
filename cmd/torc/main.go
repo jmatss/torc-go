@@ -77,6 +77,14 @@ func main() {
 			}
 		case "ls":
 			comController.SendChildren(com.List, nil)
+		case "log", "level":
+			if len(cmd) != 2 {
+				fmt.Fprintf(os.Stderr, "incorrect amount of arguments, expected: %d, got: %d: "+
+					"specify log level (none, low, high)\n", 2, len(cmd))
+				continue
+			}
+
+			comController.SendChildren(com.LogLevel, []byte(cmd[1]))
 		default:
 			log.Println("incorrect command, try again")
 		}

@@ -4,8 +4,9 @@ package com
 
 import (
 	"fmt"
-	"github.com/jmatss/torc/internal/torrent"
 	"sync"
+
+	"github.com/jmatss/torc/internal/torrent"
 )
 
 const (
@@ -27,6 +28,7 @@ const (
 	TotalFailure // Failure where the process kills itself
 	Exiting
 	Complete
+	LogLevel
 )
 
 func (id Id) String() string {
@@ -43,6 +45,7 @@ func (id Id) String() string {
 		"TotalFailure",
 		"Exiting",
 		"Complete",
+		"LogLevel",
 	}[id]
 }
 

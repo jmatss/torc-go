@@ -2,8 +2,10 @@ package internal
 
 import (
 	"fmt"
+	"github.com/jmatss/torc/internal/util/logger"
 	"math/rand"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jmatss/torc/internal/torrent"
@@ -74,6 +76,16 @@ func Controller(comView com.Channel, childId string) {
 
 			case com.Quit, com.List:
 				comTorrentHandler.SendChildren(received.Id, nil)
+
+			case com.LogLevel:
+				err := setLogLevel(string(received.Data))
+				comView.SendParent(
+					com.LogLevel,
+					nil,
+					err,
+					nil,
+					childId,
+				)
 			}
 
 		case received := <-comTorrentHandler.Parent:
@@ -117,4 +129,15 @@ func fetchTorrentsFromDisk() map[string]*torrent.Torrent {
 // TODO: currently only returns default
 func fetchDownloadPathFromDisk() string {
 	return filepath.FromSlash("")
+}
+
+func setLogLevel(level string) error {
+	for i, realLevel := range logger.GetValues() {
+		if strings.ToLower(level) == strings.ToLower(realLevel) {
+			logger.CurrentLevel = logger.Level(i)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unable to set log level to \"%s\"", level)
 }
