@@ -71,7 +71,7 @@ func NewTorrent(filename string) (*Torrent, error) {
 		return nil, fmt.Errorf("unable to create new torrent: %w", err)
 	} else if torrent.Info.PieceLength == 0 {
 		return nil, fmt.Errorf("unable to parse piece length from torrent: %w", err)
-	} else if torrent.Info.Pieces == "" || len(torrent.Info.Pieces)%20 != 0 {
+	} else if torrent.Info.Pieces == "" || len(torrent.Info.Pieces)%sha1.Size != 0 {
 		return nil, fmt.Errorf("unable to parse pieces from torrent: %w", err)
 	}
 
@@ -101,9 +101,9 @@ func (t *Torrent) WriteData(pieceData []byte) (int, error) {
 	begin := binary.BigEndian.Uint32(pieceData[4:8])
 	data := pieceData[8:]
 
-	if pieceIndex < 0 || pieceIndex >= uint32(len(t.Info.Pieces)/20) {
+	if pieceIndex < 0 || pieceIndex >= uint32(len(t.Info.Pieces)/sha1.Size) {
 		return 0, fmt.Errorf("piece index is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/20, pieceIndex)
+			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/sha1.Size, pieceIndex)
 	}
 	if begin < 0 || begin >= uint32(t.Info.PieceLength) {
 		return 0, fmt.Errorf("begin is incorrect: "+
@@ -186,9 +186,9 @@ func (t *Torrent) ReadData(request []byte) ([]byte, error) {
 	begin := binary.BigEndian.Uint32(request[4:8])
 	length := binary.BigEndian.Uint32(request[8:])
 
-	if pieceIndex <= 0 || pieceIndex >= uint32(len(t.Info.Pieces)/20) {
+	if pieceIndex <= 0 || pieceIndex >= uint32(len(t.Info.Pieces)/sha1.Size) {
 		return nil, fmt.Errorf("piece index is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/20, pieceIndex)
+			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/sha1.Size, pieceIndex)
 	}
 	if begin <= 0 || begin >= uint32(t.Info.PieceLength) {
 		return nil, fmt.Errorf("begin is incorrect: "+
@@ -256,7 +256,7 @@ func (t *Torrent) IsCorrectPiece(pieceData []byte) bool {
 	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
 
 	receivedHash := sha1.Sum(pieceData)
-	realHash := t.Info.Pieces[pieceIndex*20 : pieceIndex*20+20]
+	realHash := t.Info.Pieces[pieceIndex*sha1.Size : pieceIndex*sha1.Size+sha1.Size]
 
 	if string(receivedHash[:]) == realHash {
 		return true

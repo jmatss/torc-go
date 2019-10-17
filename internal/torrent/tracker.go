@@ -91,9 +91,9 @@ func NewTracker(tor *Torrent, file *os.File) error {
 	}
 	tracker.Left = left
 
-	// Pieces will be divisible by 20
+	// Pieces will be divisible by 20 (sha1.Size)
 	// Bitfield initialized to all zeros
-	bitFieldLength := ((len(tor.Info.Pieces) / 20) / 8) + 1
+	bitFieldLength := ((len(tor.Info.Pieces) / sha1.Size) / 8) + 1
 	tracker.BitFieldHave = make([]byte, bitFieldLength)
 	tracker.BitFieldDownloading = make([]byte, bitFieldLength)
 	for i := 0; i < bitFieldLength; i++ {
