@@ -5,8 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"github.com/jmatss/torc/internal/util/cons"
-	"log"
+	"github.com/jmatss/torc/internal/util/logger"
 	"net"
 	"strconv"
 	"strings"
@@ -193,9 +192,7 @@ func (p *Peer) Handshake(peerId string, infoHash [sha1.Size]byte) (net.Conn, err
 			"%s: %w", conn.RemoteAddr().String(), err)
 	}
 
-	if cons.Logging == cons.High {
-		log.Printf("Peer handshake done")
-	}
+	logger.Log(logger.High, "Peer handshake done")
 
 	return conn, nil
 }
@@ -263,9 +260,8 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		return fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
 
-	if cons.Logging == cons.High {
-		log.Printf("Sent to %s - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
-	}
+	logger.Log(logger.High, "Sent to %s - len: %d, id: %s",
+		p.Connection.RemoteAddr(), len(data), messageId.String())
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -291,9 +287,8 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
 	data = append(data, payload...)
 
-	if cons.Logging == cons.High {
-		log.Printf("Sent data to %s: - len: %d, id: %s", p.Connection.RemoteAddr(), len(data), messageId.String())
-	}
+	logger.Log(logger.High, "Sent data to %s: - len: %d, id: %s",
+		p.Connection.RemoteAddr(), len(data), messageId.String())
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -340,10 +335,8 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 			MaxRequestLength, dataLen)
 	}
 
-	if cons.Logging == cons.High {
-		log.Printf("Recv from %s - header: 0x%x, datalen: %d, id: %s",
-			p.Connection.RemoteAddr().String(), header[0:5], dataLen, messageId.String())
-	}
+	logger.Log(logger.High, "Recv from %s - header: 0x%x, datalen: %d, id: %s",
+		p.Connection.RemoteAddr().String(), header[0:5], dataLen, messageId.String())
 
 	data := make([]byte, dataLen)
 	off := 0

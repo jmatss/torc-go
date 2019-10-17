@@ -4,7 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"github.com/jmatss/torc/internal/util/logger"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,9 +160,7 @@ func (t *Torrent) WriteData(pieceData []byte) (int, error) {
 			return 0, fmt.Errorf("unable to write data to file %s: %w", path, err)
 		}
 
-		if cons.Logging == cons.High {
-			log.Printf("%d bytes written to file %s", n, f.Name())
-		}
+		logger.Log(logger.High, "%d bytes written to file %s", n, f.Name())
 
 		f.Close()
 

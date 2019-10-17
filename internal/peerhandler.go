@@ -3,11 +3,10 @@ package internal
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
-
 	"github.com/jmatss/torc/internal/torrent"
 	"github.com/jmatss/torc/internal/util/com"
 	"github.com/jmatss/torc/internal/util/cons"
+	"github.com/jmatss/torc/internal/util/logger"
 )
 
 type remoteDTO struct {
@@ -25,18 +24,14 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 	// complete the handshake.
 	conn, err := peer.Handshake(cons.PeerId, tor.Tracker.InfoHash)
 	if err != nil {
-		if cons.Logging == cons.High {
-			log.Printf("PeerHandler handshake failure!: %w", err)
-		}
+		logger.Log(logger.High, "PeerHandler handshake failure!: %w", err)
 		comTorrentHandler.SendParent(com.TotalFailure, nil, err, nil, childId)
 		return
 	}
 	peer.Connection = conn
 	defer func() {
 		peer.Connection.Close()
-		if cons.Logging == cons.High {
-			log.Printf("PeerHandler exiting")
-		}
+		logger.Log(logger.High, "PeerHandler exiting")
 	}()
 
 	comTorrentHandler.SendParent(com.Success, nil, nil, nil, childId)
@@ -77,9 +72,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 			// The receiver of the message over the "readChannel" can check and see that
 			// "Err" is set, and figure out that this go process is dead.
 			if err != nil {
-				if cons.Logging == cons.High {
-					log.Printf("read func exiting, err: %v", err)
-				}
+				logger.Log(logger.High, "read func exiting, err: %v", err)
 				return
 			}
 		}
@@ -209,9 +202,7 @@ func downloader(
 			return
 		}
 
-		if cons.Logging == cons.High {
-			log.Printf("piece %d downloaded", pieceIndex)
-		}
+		logger.Log(logger.High, "piece %d downloaded", pieceIndex)
 
 		// Send have message to torrentHandler to let it now that a new piece is downloaded
 		// and a Have message can be sent to all peers.
@@ -289,16 +280,12 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 		}
 
 		if !t.IsCorrectPiece(received.Data) {
-			if cons.Logging == cons.Low {
-				log.Printf("received incorrect piece from remote peer")
-			}
+			logger.Log(logger.Low, "received incorrect piece from remote peer")
 			return 0, fmt.Errorf("the received piece's sha1 hash is incorrect")
 		}
 		_, err := t.WriteData(received.Data)
 		if err != nil {
-			if cons.Logging == cons.Low {
-				log.Printf("error writing to file: %v", err)
-			}
+			logger.Log(logger.Low, "error writing to file: %v", err)
 			return 0, fmt.Errorf("unable to write to file: %v", err)
 		}
 

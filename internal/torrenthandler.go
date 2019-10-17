@@ -2,7 +2,7 @@ package internal
 
 import (
 	"fmt"
-	"log"
+	"github.com/jmatss/torc/internal/util/logger"
 	"time"
 
 	"github.com/jmatss/torc/internal/torrent"
@@ -22,9 +22,7 @@ const (
 func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 	childId := string(tor.Tracker.InfoHash[:])
 
-	if cons.Logging == cons.Low {
-		log.Printf("TorrentHandler started")
-	}
+	logger.Log(logger.Low, "TorrentHandler started")
 
 	// Make tracker request. This handler will kill itself if it isn't able to
 	// complete the tracker request.
@@ -36,9 +34,7 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 	comController.AddChild(childId)
 	defer comController.RemoveChild(childId)
 
-	if cons.Logging == cons.High {
-		log.Printf("TorrentHandler tracker request done successfully")
-	}
+	logger.Log(logger.High, "TorrentHandler tracker request done successfully")
 
 	// Start up peerHandlers. Every peer handler will be in charge of one peer
 	// of this torrent.
@@ -130,9 +126,7 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 				Interval time expired. Send new tracker request to get updated information.
 			*/
 
-			if cons.Logging == cons.High {
-				log.Printf("TorrentHandler interval timeout")
-			}
+			logger.Log(logger.High, "TorrentHandler interval timeout")
 
 			if err := tor.Request(cons.PeerId); err != nil {
 				retryCount++
