@@ -3,11 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"github.com/jmatss/torc/internal"
 	"log"
 	"os"
 	"strings"
 
+	"github.com/jmatss/torc/internal"
 	"github.com/jmatss/torc/internal/torrent"
 	"github.com/jmatss/torc/internal/util/com"
 )

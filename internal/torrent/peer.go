@@ -5,12 +5,13 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"github.com/jmatss/torc/internal/util/logger"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jmatss/torc/internal/util/logger"
 )
 
 const (

@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/binary"
 	"fmt"
+
 	"github.com/jmatss/torc/internal/torrent"
 	"github.com/jmatss/torc/internal/util/com"
 	"github.com/jmatss/torc/internal/util/cons"

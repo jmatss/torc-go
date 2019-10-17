@@ -2,12 +2,12 @@ package internal
 
 import (
 	"fmt"
-	"github.com/jmatss/torc/internal/util/logger"
 	"time"
 
 	"github.com/jmatss/torc/internal/torrent"
 	"github.com/jmatss/torc/internal/util/com"
 	"github.com/jmatss/torc/internal/util/cons"
+	"github.com/jmatss/torc/internal/util/logger"
 )
 
 const (

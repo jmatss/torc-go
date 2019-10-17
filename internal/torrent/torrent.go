@@ -4,13 +4,13 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"github.com/jmatss/torc/internal/util/logger"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/jackpal/bencode-go"
 	"github.com/jmatss/torc/internal/util/cons"
+	"github.com/jmatss/torc/internal/util/logger"
 )
 
 const (

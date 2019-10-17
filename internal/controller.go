@@ -2,7 +2,6 @@ package internal
 
 import (
 	"fmt"
-	"github.com/jmatss/torc/internal/util/logger"
 	"math/rand"
 	"path/filepath"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/jmatss/torc/internal/torrent"
 	"github.com/jmatss/torc/internal/util/com"
 	"github.com/jmatss/torc/internal/util/cons"
+	"github.com/jmatss/torc/internal/util/logger"
 )
 
 func Controller(comView com.Channel, childId string) {
