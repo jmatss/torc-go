@@ -1,5 +1,6 @@
 // ComMessages are sent between go processes over channels to communicate with each other.
 // A Channel wraps channels so that messages can easily be sent in both directions.
+// TODO: is it necessary to send childId to parent?
 package com
 
 import (
@@ -89,6 +90,29 @@ func (ch *Channel) SendParent(
 	sendNew(ch.Parent, id, data, error, torrent, child)
 }
 
+// Same as SendParent but a copy of a Message is sent.
+// Modifies the Child field inside the message.
+func (ch *Channel) SendParentCopy(msg Message, child string) bool {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
+	_, ok := ch.children[child]
+	if !ok {
+		return false
+	}
+
+	msg.Child = child
+	send(ch.Parent, msg)
+	return true
+}
+
+func (ch *Channel) SendParentError(id Id, err error) {
+	ch.mut.RLock()
+	defer ch.mut.RUnlock()
+
+	sendNew(ch.Parent, id, nil, err, nil, "")
+}
+
 // Sends a message to the specified child.
 // Returns true if it sent away the message correctly and false if the child channel
 // doesn't exist (i.e. the child isn't in the "children" map).
@@ -119,22 +143,6 @@ func (ch *Channel) SendChildren(id Id, data []byte) {
 	for child, childCh := range ch.children {
 		sendNew(childCh, id, data, nil, nil, child)
 	}
-}
-
-// Same as SendParent but a copy of a Message is sent.
-// Modifies the Child field inside the message.
-func (ch *Channel) SendParentCopy(msg Message, child string) bool {
-	ch.mut.RLock()
-	defer ch.mut.RUnlock()
-
-	_, ok := ch.children[child]
-	if !ok {
-		return false
-	}
-
-	msg.Child = child
-	send(ch.Parent, msg)
-	return true
 }
 
 // Same as SendChild but a copy of a Message is sent.

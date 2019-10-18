@@ -63,13 +63,10 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 			case com.Start:
 				count := comPeerHandler.CountChildren()
 				if count > 0 {
-					comController.SendParent(
+					comController.SendParentError(
 						received.Id,
-						nil,
 						fmt.Errorf("cant start since it isn't stopped, %d go processes "+
 							"still running", count),
-						nil,
-						childId,
 					)
 				} else {
 					for i, peer := range tor.Tracker.Peers {
@@ -131,10 +128,10 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 			if err := tor.Request(cons.PeerId); err != nil {
 				retryCount++
 				if retryCount >= MaxRetryCount {
-					comController.SendParent(com.TotalFailure, nil, err, nil, childId)
+					comController.SendParentError(com.TotalFailure, err)
 					return
 				} else {
-					comController.SendParent(com.Failure, nil, err, nil, childId)
+					comController.SendParentError(com.Failure, err)
 				}
 			} else {
 				retryCount = 0

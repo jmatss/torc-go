@@ -36,24 +36,18 @@ func Controller(comView com.Channel, childId string) {
 			switch received.Id {
 			case com.Add:
 				if received.Torrent == nil {
-					comView.SendParent(
+					comView.SendParentError(
 						com.Failure,
-						nil,
 						fmt.Errorf("no torrent specified when trying to \"%s\"", received.Id.String()),
-						nil,
-						childId,
 					)
 					break
 				}
 
 				handlerId := string(received.Torrent.Tracker.InfoHash[:])
 				if comTorrentHandler.Exists(handlerId) {
-					comView.SendParent(
+					comView.SendParentError(
 						com.Failure,
-						nil,
 						fmt.Errorf("tried to add a torrent that already exists"),
-						nil,
-						childId,
 					)
 					break
 				}
@@ -65,12 +59,9 @@ func Controller(comView com.Channel, childId string) {
 			case com.Remove, com.Start, com.Stop:
 				// TODO: Fix this, must send correct child id (InfoHash).
 				if ok := comTorrentHandler.SendChild(received.Id, nil, nil, nil, childId); !ok {
-					comView.SendParent(
+					comView.SendParentError(
 						com.Failure,
-						nil,
 						fmt.Errorf("tried to \"%s\" non existing torrent", received.Id),
-						nil,
-						childId,
 					)
 				}
 
@@ -79,12 +70,9 @@ func Controller(comView com.Channel, childId string) {
 
 			case com.LogLevel:
 				err := setLogLevel(string(received.Data))
-				comView.SendParent(
+				comView.SendParentError(
 					com.LogLevel,
-					nil,
 					err,
-					nil,
-					childId,
 				)
 			}
 

@@ -27,7 +27,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 	conn, err := peer.Handshake(cons.PeerId, tor.Tracker.InfoHash)
 	if err != nil {
 		logger.Log(logger.High, "PeerHandler handshake failure!: %w", err)
-		comTorrentHandler.SendParent(com.TotalFailure, nil, err, nil, childId)
+		comTorrentHandler.SendParentError(com.TotalFailure, err)
 		return
 	}
 	peer.Connection = conn
@@ -36,7 +36,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 		logger.Log(logger.High, "PeerHandler exiting")
 	}()
 
-	comTorrentHandler.SendParent(com.Success, nil, nil, nil, childId)
+	comTorrentHandler.SendParentError(com.Success, nil)
 	comTorrentHandler.AddChild(childId)
 	defer comTorrentHandler.RemoveChild(childId)
 
@@ -102,7 +102,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 			*/
 			// Kills itself if it receives an error
 			if received.Err != nil {
-				comTorrentHandler.SendParent(com.TotalFailure, nil, err, nil, childId)
+				comTorrentHandler.SendParentError(com.TotalFailure, err)
 
 				// TODO: need to kill downloader, do this in a better way
 				if received.Id == torrent.Piece {
@@ -133,13 +133,10 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 				byteShift := pieceIndex / 8
 				bitShift := 8 - (pieceIndex % 8) // bits are stored in "reverse"
 				if int(byteShift) > len(peer.RemoteBitField) {
-					comTorrentHandler.SendParent(
+					comTorrentHandler.SendParentError(
 						com.TotalFailure,
-						nil,
 						fmt.Errorf("the remote peer has specified a piece index that is to big to "+
 							"fit in it's bitfield"),
-						nil,
-						childId,
 					)
 					return
 				}
@@ -178,12 +175,9 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 			case torrent.Cancel:
 				// TODO: Nothing to do atm, might need to add functionality later
 			default:
-				comTorrentHandler.SendParent(
+				comTorrentHandler.SendParentError(
 					com.TotalFailure,
-					nil,
 					fmt.Errorf("unexpected message id \"%d\"", received.Id),
-					nil,
-					childId,
 				)
 				return
 			}
