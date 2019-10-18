@@ -201,6 +201,10 @@ func downloader(
 	for {
 		pieceIndex, err := downloadPiece(downloadChannel, t, p)
 		if err != nil {
+			// TODO: notify peerhandler/reader about exit
+			logger.Log(logger.Low, "remote peer \"%s\" doesn't have any free pieces "+
+				"for the torrent with info hash \"%s\"",
+				p.HostAndPort, t.Tracker.InfoHash)
 			return
 		}
 
@@ -310,19 +314,17 @@ func findFreePieceIndex(t *torrent.Torrent, p *torrent.Peer) (int, error) {
 	for i := 0; i < amountOfPieces; i++ {
 		byteIndex := i / 8
 		bitIndex := i % 8
-		taken := int(t.Tracker.BitFieldDownloading[byteIndex]) & (1 << (7 - uint(bitIndex)))
 
-		// If taken < 1:
-		//  this piece is free to download.
-		//  If (this remote peer has that piece):
+		localAvailable := int(t.Tracker.BitFieldDownloading[byteIndex]) & (1 << (7 - uint(bitIndex)))
+		remoteAvailable := p.RemoteBitField[byteIndex] & (1 << (7 - uint(bitIndex)))
+
+		// If (this client doesn't have the piece && the remote peer has this piece):
 		//    download it
-		//  Else:
-		//    continue to loop through and look for a free piece that this remote peer has.
-		// Else (taken >= 1):
-		//  this piece is taken i.e. is downloaded or is being downloaded from other peer.
-		//  continue to loop through and look for a free piece that this remote peer has.
-		if taken < 1 {
-			// Set the piece to "taken"
+		// Else:
+		//  continue to loop through and look for pieces that this client doesn't have
+		//  , but the remote peer has.
+		if localAvailable == 0 && remoteAvailable == 1 {
+			// Set the piece to 1 in the BitFieldDownloading.
 			t.Tracker.BitFieldDownloading[byteIndex] |= 1 << (7 - uint(bitIndex))
 			return i, nil
 		}
