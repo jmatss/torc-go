@@ -107,9 +107,6 @@ func (ch *Channel) SendParentCopy(msg Message, child string) bool {
 }
 
 func (ch *Channel) SendParentError(id Id, err error) {
-	ch.mut.RLock()
-	defer ch.mut.RUnlock()
-
 	sendNew(ch.Parent, id, nil, err, nil, "")
 }
 
