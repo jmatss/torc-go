@@ -43,7 +43,7 @@ func Handler(comController com.Channel, tor *Torrent) {
 		if i >= MaxPeers {
 			break
 		}
-		go peer.PeerHandler(comPeerHandler, &tor.Tracker.Peers[i], tor)
+		go peer.Handler(comPeerHandler, &tor.Tracker.Peers[i], tor)
 	}
 
 	retryCount := 0
@@ -73,7 +73,7 @@ func Handler(comController com.Channel, tor *Torrent) {
 						if i >= MaxPeers {
 							break
 						}
-						go peer.PeerHandler(comPeerHandler, &p, tor)
+						go peer.Handler(comPeerHandler, &p, tor)
 					}
 					comController.SendParent(received.Id, nil, nil, nil, childId)
 				}
@@ -108,7 +108,7 @@ func Handler(comController com.Channel, tor *Torrent) {
 				//  either some sort of saved order or random
 				for i, p := range tor.Tracker.Peers {
 					if !comPeerHandler.Exists(p.HostAndPort) {
-						go peer.PeerHandler(comPeerHandler, &tor.Tracker.Peers[i], tor)
+						go peer.Handler(comPeerHandler, &tor.Tracker.Peers[i], tor)
 						break
 					}
 				}

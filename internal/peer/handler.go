@@ -20,21 +20,21 @@ type remoteDTO struct {
 
 // Handler in charge of one specific peer.
 // TODO: dont send torrent argument like this, ugly
-func PeerHandler(comTorrentHandler com.Channel, p *Peer, tor *torrent.Torrent) {
+func Handler(comTorrentHandler com.Channel, p *Peer, tor *torrent.Torrent) {
 	childId := string(p.HostAndPort)
 
 	// Peer handshake. This handler will kill itself if it isn't able to
 	// complete the handshake.
 	conn, err := p.Handshake(tor.Tracker.InfoHash, cons.PeerId)
 	if err != nil {
-		logger.Log(logger.High, "PeerHandler handshake failure!: %w", err)
+		logger.Log(logger.High, "peer.Handler handshake failure!: %w", err)
 		comTorrentHandler.SendParentError(com.TotalFailure, err)
 		return
 	}
 	p.Connection = conn
 	defer func() {
 		p.Connection.Close()
-		logger.Log(logger.High, "PeerHandler exiting")
+		logger.Log(logger.High, "peer.Handler exiting")
 	}()
 
 	comTorrentHandler.SendParentError(com.Success, nil)
@@ -53,7 +53,7 @@ func PeerHandler(comTorrentHandler com.Channel, p *Peer, tor *torrent.Torrent) {
 
 	/*
 		Spawn a downloader that requests data from the remote peer.
-		This PeerHandler will receive the data from the remote peer
+		This Handler will receive the data from the remote peer
 		and forward it to the downloader via the downloadChannel.
 	*/
 	downloadChannel := make(chan remoteDTO, com.ChanSize)
@@ -64,7 +64,7 @@ func PeerHandler(comTorrentHandler com.Channel, p *Peer, tor *torrent.Torrent) {
 		and puts it into the "readChannel".
 	*/
 	// TODO: modify buffer size
-	// TODO: kill this go process when the PeerHandler exits
+	// TODO: kill this go process when the peer.Handler exits
 	readChannel := make(chan remoteDTO, com.ChanSize)
 	go func() {
 		for {
@@ -196,7 +196,7 @@ func downloader(
 	for {
 		pieceIndex, err := downloadPiece(downloadChannel, t, p)
 		if err != nil {
-			// TODO: notify peerhandler/reader about exit
+			// TODO: notify peer.handler/reader about exit
 			logger.Log(logger.Low, "remote peer \"%s\" doesn't have any free pieces "+
 				"for the torrent with info hash \"%s\"",
 				p.HostAndPort, t.Tracker.InfoHash)
