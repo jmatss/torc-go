@@ -19,8 +19,7 @@ const (
 	// 2^15 max according to unofficial specs.
 	// See https://wiki.theory.org/index.php/BitTorrentSpecification#Messages
 	// (section "request")
-	MaxRequestLength = 1 << 14
-	//MaxRequestLength = 1 << 15
+	MaxRequestLength uint32 = 1 << 14
 )
 
 // See https://wiki.theory.org/index.php/BitTorrentSpecification#Metainfo_File_Structure

@@ -1,10 +1,10 @@
-package internal
+package torrent
 
 import (
 	"fmt"
 	"time"
 
-	"github.com/jmatss/torc/internal/torrent"
+	"github.com/jmatss/torc/internal/peer"
 	"github.com/jmatss/torc/internal/util/com"
 	"github.com/jmatss/torc/internal/util/cons"
 	"github.com/jmatss/torc/internal/util/logger"
@@ -19,7 +19,7 @@ const (
 
 // Handler in charge of one specific torrent.
 // TODO: setup so that other peers can connect to this handler
-func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
+func TorrentHandler(comController com.Channel, tor *Torrent) {
 	childId := string(tor.Tracker.InfoHash[:])
 
 	logger.Log(logger.Low, "TorrentHandler started")
@@ -43,7 +43,7 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 		if i >= MaxPeers {
 			break
 		}
-		go PeerHandler(comPeerHandler, &tor.Tracker.Peers[i], tor)
+		go peer.PeerHandler(comPeerHandler, &tor.Tracker.Peers[i], tor)
 	}
 
 	retryCount := 0
@@ -69,11 +69,11 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 							"still running", count),
 					)
 				} else {
-					for i, peer := range tor.Tracker.Peers {
+					for i, p := range tor.Tracker.Peers {
 						if i >= MaxPeers {
 							break
 						}
-						go PeerHandler(comPeerHandler, &peer, tor)
+						go peer.PeerHandler(comPeerHandler, &p, tor)
 					}
 					comController.SendParent(received.Id, nil, nil, nil, childId)
 				}
@@ -106,9 +106,9 @@ func TorrentHandler(comController com.Channel, tor *torrent.Torrent) {
 				// The peerHandler just died, try and add a new peer (might be the same peer)
 				// TODO: select peer in another way, this will always restart the same peer
 				//  either some sort of saved order or random
-				for i, peer := range tor.Tracker.Peers {
-					if !comPeerHandler.Exists(peer.HostAndPort) {
-						go PeerHandler(comPeerHandler, &tor.Tracker.Peers[i], tor)
+				for i, p := range tor.Tracker.Peers {
+					if !comPeerHandler.Exists(p.HostAndPort) {
+						go peer.PeerHandler(comPeerHandler, &tor.Tracker.Peers[i], tor)
 						break
 					}
 				}

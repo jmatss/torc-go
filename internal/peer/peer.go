@@ -1,4 +1,4 @@
-package torrent
+package peer
 
 import (
 	"bytes"
@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jmatss/torc/internal/torrent"
+	bt "github.com/jmatss/torc/internal/util/bittorrent"
 	"github.com/jmatss/torc/internal/util/logger"
 )
 
@@ -19,45 +21,6 @@ const (
 	HandshakeTimeout  = 5 * time.Second
 	ConnectionTimeout = 2 * time.Minute
 )
-
-const (
-	// The KeepAlive message doesn't have an id,
-	//  set to -1 so that it still can be distinguished.
-	KeepAlive MessageId = iota - 1
-	Choke
-	UnChoke
-	Interested
-	NotInterested
-	Have
-	Bitfield
-	Request
-	Piece
-	Cancel
-)
-
-// Variables used in the handshake message(s).
-var (
-	PStr     = []byte("BitTorrent protocol")
-	Reserved = []byte{0, 0, 0, 0, 0, 0, 0, 0}
-)
-
-type MessageId int
-
-func (id MessageId) String() string {
-	// enum indexing starts at "-1", need to increment with 1.
-	return []string{
-		"KeepAlive",
-		"Choke",
-		"UnChoke",
-		"Interested",
-		"NotInterested",
-		"Have",
-		"Bitfield",
-		"Request",
-		"Piece",
-		"Cancel",
-	}[id+1]
-}
 
 type Peer struct {
 	sync.RWMutex
@@ -158,12 +121,12 @@ func RecvHandshake(peerId string, infoHash [sha1.Size]byte) (Peer, error) {}
 
 func (p *Peer) sendHandshake(infoHash [sha1.Size]byte, peerId string) error {
 	// handshake: <pstrlen><pstr><reserved><info_hash><peer_id>
-	dataLength := 1 + len(PStr) + 8 + len(infoHash) + len(peerId)
+	dataLength := 1 + len(bt.PStr) + 8 + len(infoHash) + len(peerId)
 	data := make([]byte, 0, dataLength)
 
-	data = append(data, byte(len(PStr)))        // pstrlen
-	data = append(data, PStr...)                // pstr
-	data = append(data, Reserved...)            // reserved
+	data = append(data, byte(len(bt.PStr)))     // pstrlen
+	data = append(data, bt.PStr...)             // pstr
+	data = append(data, bt.Reserved...)         // reserved
 	data = append(data, []byte(infoHash[:])...) // info_hash
 	data = append(data, []byte(peerId)...)      // peer_id
 
@@ -210,8 +173,8 @@ func (p *Peer) recvHandshake(infoHash [sha1.Size]byte) error {
 	// Received handshake format: <pstrlen><pstr><reserved><info_hash><peer_id>
 	// TODO: Ignoring pstr, reserved & peerid, only interested in infoHash,
 	//  implement more functionality later.
-	start := lenpstr + len(Reserved)
-	end := lenpstr + len(Reserved) + len(infoHash)
+	start := lenpstr + len(bt.Reserved)
+	end := lenpstr + len(bt.Reserved) + len(infoHash)
 	remoteInfoHash := response[start:end]
 
 	if !bytes.Equal(remoteInfoHash, infoHash[:]) {
@@ -244,18 +207,18 @@ func (p *Peer) recvHandshake(infoHash [sha1.Size]byte) error {
 // - KeepAlive, Choke, UnChoke, Interested, NotInterested: Not used
 // - Have: <piece index>[0]
 // - Request, Cancel: <index>[0], <begin>[1], <length>[2]
-func (p *Peer) Send(messageId MessageId, input ...uint32) error {
+func (p *Peer) Send(messageId bt.MessageId, input ...uint32) error {
 	var data []byte
 	id := byte(messageId)
 
 	switch messageId {
-	case KeepAlive:
+	case bt.KeepAlive:
 		// Format: <lenPrefix=0000>
 		data = []byte{0, 0, 0, 0}
-	case Choke, UnChoke, Interested, NotInterested:
+	case bt.Choke, bt.UnChoke, bt.Interested, bt.NotInterested:
 		// Format: <lenPrefix=0001><id=X>
 		data = []byte{0, 0, 0, 1, id}
-	case Have:
+	case bt.Have:
 		// Format: <lenPrefix=0005><id=4><piece index>
 		if len(input) != 1 {
 			return fmt.Errorf("unable to send \"%s\" message: "+
@@ -268,7 +231,7 @@ func (p *Peer) Send(messageId MessageId, input ...uint32) error {
 
 		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
 		binary.BigEndian.PutUint32(data[5:], input[0])
-	case Request, Cancel:
+	case bt.Request, bt.Cancel:
 		// Format: 	<lenPrefix=000(13)><id=X><index(4B)><begin(4B)><length(4B)>
 		if len(input) != 3 {
 			return fmt.Errorf("unable to send \"%s\" message: "+
@@ -306,7 +269,7 @@ func (p *Peer) Send(messageId MessageId, input ...uint32) error {
 //
 // This function can send:
 // Bitfield or Piece messages
-func (p *Peer) SendData(messageId MessageId, payload []byte) error {
+func (p *Peer) SendData(messageId bt.MessageId, payload []byte) error {
 	lenPrefix := 1 + len(payload)
 	id := byte(messageId)
 	data := make([]byte, 0, 4+lenPrefix)
@@ -333,7 +296,7 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 //
 // Packet format: <length prefix><message ID><payload>
 // Where <length prefix> is 4 bytes, <message ID> is 1 byte and <payload> is variable length.
-func (p *Peer) Recv() (MessageId, []byte, error) {
+func (p *Peer) Recv() (bt.MessageId, []byte, error) {
 	// Reset deadline
 	err := p.Connection.SetDeadline(time.Now().Add(ConnectionTimeout))
 	if err != nil {
@@ -355,11 +318,11 @@ func (p *Peer) Recv() (MessageId, []byte, error) {
 		return 0, nil, fmt.Errorf("peer sent to few bytes, expected: >=4, got: %d", n)
 	}
 	dataLen := binary.BigEndian.Uint32(header[:4]) - 1 // -1 to "remove" len of messageId
-	messageId := MessageId(int(header[4]))
+	messageId := bt.MessageId(int(header[4]))
 
-	if dataLen > MaxRequestLength*2 { // arbitrary value
+	if dataLen > torrent.MaxRequestLength*2 { // arbitrary value
 		return 0, nil, fmt.Errorf("peer sent to many bytes, expected: >=%d, got: %d",
-			MaxRequestLength, dataLen)
+			torrent.MaxRequestLength, dataLen)
 	}
 
 	logger.Log(logger.High, "Recv from %s - header: 0x%x, datalen: %d, id: %s",

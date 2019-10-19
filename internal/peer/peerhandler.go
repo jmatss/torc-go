@@ -1,4 +1,4 @@
-package internal
+package peer
 
 import (
 	"crypto/sha1"
@@ -6,33 +6,34 @@ import (
 	"fmt"
 
 	"github.com/jmatss/torc/internal/torrent"
+	bt "github.com/jmatss/torc/internal/util/bittorrent"
 	"github.com/jmatss/torc/internal/util/com"
 	"github.com/jmatss/torc/internal/util/cons"
 	"github.com/jmatss/torc/internal/util/logger"
 )
 
 type remoteDTO struct {
-	Id   torrent.MessageId
+	Id   bt.MessageId
 	Data []byte
 	Err  error
 }
 
 // Handler in charge of one specific peer.
 // TODO: dont send torrent argument like this, ugly
-func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent.Torrent) {
-	childId := string(peer.HostAndPort)
+func PeerHandler(comTorrentHandler com.Channel, p *Peer, tor *torrent.Torrent) {
+	childId := string(p.HostAndPort)
 
 	// Peer handshake. This handler will kill itself if it isn't able to
 	// complete the handshake.
-	conn, err := peer.Handshake(tor.Tracker.InfoHash, cons.PeerId)
+	conn, err := p.Handshake(tor.Tracker.InfoHash, cons.PeerId)
 	if err != nil {
 		logger.Log(logger.High, "PeerHandler handshake failure!: %w", err)
 		comTorrentHandler.SendParentError(com.TotalFailure, err)
 		return
 	}
-	peer.Connection = conn
+	p.Connection = conn
 	defer func() {
-		peer.Connection.Close()
+		p.Connection.Close()
 		logger.Log(logger.High, "PeerHandler exiting")
 	}()
 
@@ -43,12 +44,12 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 	//peer.SendData(torrent.Bitfield, tor.Tracker.BitFieldHave)
 	// Start by un choking remote peer and send that this client is interested
 	// TODO: these state doesn't currently change after this point, CODE
-	peer.Send(torrent.Interested)
-	peer.Send(torrent.UnChoke)
+	p.Send(bt.Interested)
+	p.Send(bt.UnChoke)
 
 	// RemoteBitField initialized to all zeros
 	bitFieldLength := ((len(tor.Info.Pieces) / sha1.Size) / 8) + 1
-	peer.RemoteBitField = make([]byte, bitFieldLength)
+	p.RemoteBitField = make([]byte, bitFieldLength)
 
 	/*
 		Spawn a downloader that requests data from the remote peer.
@@ -56,7 +57,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 		and forward it to the downloader via the downloadChannel.
 	*/
 	downloadChannel := make(chan remoteDTO, com.ChanSize)
-	go downloader(comTorrentHandler, downloadChannel, tor, peer)
+	go downloader(comTorrentHandler, downloadChannel, tor, p)
 
 	/*
 		Spawn a go process that receives data from the remote peer
@@ -67,7 +68,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 	readChannel := make(chan remoteDTO, com.ChanSize)
 	go func() {
 		for {
-			id, data, err := peer.Recv()
+			id, data, err := p.Recv()
 			readChannel <- remoteDTO{id, data, err}
 
 			// Kills itself if it receives a error.
@@ -89,7 +90,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 			switch received.Id {
 			case com.Have:
 				pieceIndex := binary.BigEndian.Uint32(received.Data)
-				peer.Send(torrent.Have, pieceIndex)
+				p.Send(bt.Have, pieceIndex)
 
 			case com.Quit:
 				// TODO: Kill internal "readChannel" go process & downloader
@@ -105,34 +106,34 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 				comTorrentHandler.SendParentError(com.TotalFailure, err)
 
 				// TODO: need to kill downloader, do this in a better way
-				if received.Id == torrent.Piece {
+				if received.Id == bt.Piece {
 					downloadChannel <- received
 				}
 				return
 			}
 
 			switch received.Id {
-			case torrent.KeepAlive:
+			case bt.KeepAlive:
 				// TODO: do something?
-			case torrent.Choke:
-				peer.PeerChoking = true
+			case bt.Choke:
+				p.PeerChoking = true
 				downloadChannel <- received
-			case torrent.UnChoke:
-				peer.PeerChoking = false
+			case bt.UnChoke:
+				p.PeerChoking = false
 				downloadChannel <- received
-			case torrent.Interested:
-				peer.PeerInterested = true
+			case bt.Interested:
+				p.PeerInterested = true
 				downloadChannel <- received
-			case torrent.NotInterested:
-				peer.PeerInterested = false
+			case bt.NotInterested:
+				p.PeerInterested = false
 				downloadChannel <- received
-			case torrent.Have:
+			case bt.Have:
 				// Remote peer indicates that it has just received the piece with the index "pieceIndex".
 				// Update the "RemoteBitField" in this peer struct by OR:ing in a 1 at the correct index.
 				pieceIndex := binary.BigEndian.Uint32(received.Data)
 				byteShift := pieceIndex / 8
 				bitShift := 8 - (pieceIndex % 8) // bits are stored in "reverse"
-				if int(byteShift) > len(peer.RemoteBitField) {
+				if int(byteShift) > len(p.RemoteBitField) {
 					comTorrentHandler.SendParentError(
 						com.TotalFailure,
 						fmt.Errorf("the remote peer has specified a piece index that is to big to "+
@@ -142,19 +143,19 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 				}
 
 				// TODO: might deadlock if the operations fails
-				peer.Lock()
-				peer.RemoteBitField[byteShift] |= 1 << bitShift
-				peer.Unlock()
+				p.Lock()
+				p.RemoteBitField[byteShift] |= 1 << bitShift
+				p.Unlock()
 
-			case torrent.Bitfield:
+			case bt.Bitfield:
 				// If correct length, assume correct bitfield. Update local to match remote.
-				if len(received.Data) == len(peer.RemoteBitField) {
-					peer.Lock()
-					peer.RemoteBitField = received.Data
-					peer.Unlock()
+				if len(received.Data) == len(p.RemoteBitField) {
+					p.Lock()
+					p.RemoteBitField = received.Data
+					p.Unlock()
 				}
 
-			case torrent.Request:
+			case bt.Request:
 				// TODO: do in another go process or another file/function
 				requestedData, err := tor.ReadData(received.Data)
 				if err != nil {
@@ -164,15 +165,15 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 				}
 
 				// Send requested data to remote peer
-				if err := peer.SendData(torrent.Piece, requestedData); err != nil {
+				if err := p.SendData(bt.Piece, requestedData); err != nil {
 					// TODO: some sort of logging or feedback of this failure.
 				}
 
-			case torrent.Piece:
+			case bt.Piece:
 				downloadChannel <- received
 
 				// TODO: some sort of logging or feedback of this success.
-			case torrent.Cancel:
+			case bt.Cancel:
 				// TODO: Nothing to do atm, might need to add functionality later
 			default:
 				comTorrentHandler.SendParentError(
@@ -190,7 +191,7 @@ func downloader(
 	comTorrentHandler com.Channel,
 	downloadChannel chan remoteDTO,
 	t *torrent.Torrent,
-	p *torrent.Peer,
+	p *Peer,
 ) {
 	for {
 		pieceIndex, err := downloadPiece(downloadChannel, t, p)
@@ -212,7 +213,7 @@ func downloader(
 	}
 }
 
-func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torrent.Peer) (int, error) {
+func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *Peer) (uint32, error) {
 	pieceIndex, err := findFreePieceIndex(t, p)
 	if err != nil {
 		return -1, err
@@ -223,7 +224,7 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 	//  this piece is the last piece, will have a size of less than "piece length"
 	pieceLength := t.Info.PieceLength
 	amountOfPieces := len(t.Info.Pieces) / sha1.Size
-	if pieceIndex == amountOfPieces-1 {
+	if pieceIndex == uint32(amountOfPieces-1) {
 		pieceLength = t.Tracker.Left
 	}
 
@@ -248,14 +249,14 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 	// Read the whole piece one request at a time and write to disk.
 	// TODO: More error checking. length of received data etc.
 	// TODO: Add timeout so it doesn't hang if it doesn't get an answer.
-	begin := 0
+	var begin uint32 = 0
 	var received remoteDTO
 	for int64(begin) < pieceLength {
 		// Prevent overflow of the last "block".
 		// TODO: fix possibility for overflow (in64 -> int)
-		requestLength := torrent.MaxRequestLength
+		var requestLength uint32 = torrent.MaxRequestLength
 		if int64(begin+torrent.MaxRequestLength) > pieceLength {
-			requestLength = int(pieceLength) - begin
+			requestLength = uint32(pieceLength) - begin
 		}
 
 		for {
@@ -269,11 +270,11 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 					return -1, received.Err
 				}
 			} else {
-				p.Send(torrent.Request, pieceIndex, begin, requestLength)
+				p.Send(bt.Request, pieceIndex, begin, requestLength)
 				received = <-downloadChannel
 				if received.Err != nil {
 					return -1, received.Err
-				} else if received.Id == torrent.Piece {
+				} else if received.Id == bt.Piece {
 					break
 				}
 			}
@@ -297,7 +298,7 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *torren
 
 // Returns a free piece that needs to be downloaded and this remote peer has.
 // (or an error)
-func findFreePieceIndex(t *torrent.Torrent, p *torrent.Peer) (int, error) {
+func findFreePieceIndex(t *torrent.Torrent, p *Peer) (uint32, error) {
 	t.Tracker.Lock()
 	defer t.Tracker.Unlock()
 	p.Lock()
@@ -320,7 +321,7 @@ func findFreePieceIndex(t *torrent.Torrent, p *torrent.Peer) (int, error) {
 		if localAvailable == 0 && remoteAvailable == 1 {
 			// Set the piece to 1 in the BitFieldDownloading.
 			t.Tracker.BitFieldDownloading[byteIndex] |= 1 << (7 - uint(bitIndex))
-			return i, nil
+			return uint32(i), nil
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"github.com/jmatss/torc/internal/peer"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -62,7 +63,7 @@ type Tracker struct {
 	Interval int64
 	Seeders  int64 `bencode:"complete"`
 	Leechers int64 `bencode:"incomplete"`
-	Peers    []Peer
+	Peers    []peer.Peer
 }
 
 // Creates a new tracker struct that will contain anything tracker related
@@ -260,7 +261,7 @@ func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 		e
 */
 // Get peers from the tracker response either in the dictionary or the binary model.
-func getPeers(body []byte) ([]Peer, error) {
+func getPeers(body []byte) ([]peer.Peer, error) {
 	// Get the bencoded value with the key "peers".
 	// Is either a list or a string
 	peersValue, err := getValue(body, "peers")
@@ -270,7 +271,7 @@ func getPeers(body []byte) ([]Peer, error) {
 
 	startIndex := 0
 	currentIndex := startIndex // will be incremented
-	var peers []Peer
+	var peers []peer.Peer
 
 	if peersValue[currentIndex] == 'l' {
 		/*
@@ -288,7 +289,7 @@ func getPeers(body []byte) ([]Peer, error) {
 				"into a list using the dictionary model")
 		}
 
-		peers = make([]Peer, 0, len(peersListInterface))
+		peers = make([]peer.Peer, 0, len(peersListInterface))
 
 		// TODO: need testing for this. IPv4, IPv6 & hostname
 		for _, peersInterface := range peersListInterface {
@@ -322,7 +323,7 @@ func getPeers(body []byte) ([]Peer, error) {
 					"from string into int using the dictionary model")
 			}
 
-			peers = append(peers, NewPeer(ipString, port))
+			peers = append(peers, peer.NewPeer(ipString, port))
 		}
 
 	} else {
@@ -351,7 +352,7 @@ func getPeers(body []byte) ([]Peer, error) {
 			currentIndex++
 
 			amountOfPeers := stringLength / groupLen
-			peers = make([]Peer, 0, amountOfPeers)
+			peers = make([]peer.Peer, 0, amountOfPeers)
 
 			for i := 0; i < amountOfPeers; i++ {
 				ip := net.IPv4(
@@ -364,7 +365,7 @@ func getPeers(body []byte) ([]Peer, error) {
 				portBytes := peersValue[currentIndex+(i*groupLen+4) : currentIndex+(i*groupLen+6)]
 				port := int64(binary.BigEndian.Uint16(portBytes))
 
-				peers = append(peers, NewPeer(ip.String(), port))
+				peers = append(peers, peer.NewPeer(ip.String(), port))
 			}
 
 		} else {

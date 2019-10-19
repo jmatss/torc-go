@@ -24,7 +24,7 @@ func Controller(comView com.Channel, childId string) {
 	// the InfoHash of the torrent being used as the "childId" in the com.Channel.
 	comTorrentHandler := com.New()
 	for _, tor := range fetchTorrentsFromDisk() {
-		go TorrentHandler(comTorrentHandler, tor)
+		go torrent.TorrentHandler(comTorrentHandler, tor)
 	}
 
 	for {
@@ -54,7 +54,7 @@ func Controller(comView com.Channel, childId string) {
 
 				// TODO: Might have to do a synchronized send and receive so that
 				//  the client can be notified if it succeeded/failed immediately.
-				go TorrentHandler(comTorrentHandler, received.Torrent)
+				go torrent.TorrentHandler(comTorrentHandler, received.Torrent)
 
 			case com.Remove, com.Start, com.Stop:
 				// TODO: Fix this, must send correct child id (InfoHash).
