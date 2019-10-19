@@ -46,7 +46,7 @@ func main() {
 		fmt.Printf("\n> ")
 		input, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "incorrect input, try again\n")
+			_, _ = fmt.Fprintf(os.Stderr, "incorrect input, try again\n")
 			continue
 		}
 		input = strings.TrimSpace(input)
@@ -57,7 +57,7 @@ func main() {
 			os.Exit(0)
 		case "a", "add":
 			if len(cmd) != 2 {
-				fmt.Fprintf(os.Stderr, "incorrect amount of arguments, expected: %d, got: %d: "+
+				_, _ = fmt.Fprintf(os.Stderr, "incorrect amount of arguments, expected: %d, got: %d: "+
 					"specify torrent filename to add\n", 2, len(cmd))
 				continue
 			}
@@ -65,7 +65,7 @@ func main() {
 			filename := cmd[1]
 			tor, err := torrent.NewTorrent(filename)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "unable to create torrent \"%s\": %v", filename, err)
+				_, _ = fmt.Fprintf(os.Stderr, "unable to create torrent \"%s\": %v", filename, err)
 				continue
 			}
 
@@ -79,7 +79,7 @@ func main() {
 			comController.SendChildren(com.List, nil)
 		case "log", "level":
 			if len(cmd) != 2 {
-				fmt.Fprintf(os.Stderr, "incorrect amount of arguments, expected: %d, got: %d: "+
+				_, _ = fmt.Fprintf(os.Stderr, "incorrect amount of arguments, expected: %d, got: %d: "+
 					"specify log level (none, low, high)\n", 2, len(cmd))
 				continue
 			}
