@@ -89,7 +89,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 			switch received.Id {
 			case com.Have:
 				pieceIndex := binary.BigEndian.Uint32(received.Data)
-				peer.Send(torrent.Have, int(pieceIndex))
+				peer.Send(torrent.Have, pieceIndex)
 
 			case com.Quit:
 				// TODO: Kill internal "readChannel" go process & downloader

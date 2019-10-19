@@ -244,7 +244,7 @@ func (p *Peer) recvHandshake(infoHash [sha1.Size]byte) error {
 // - KeepAlive, Choke, UnChoke, Interested, NotInterested: Not used
 // - Have: <piece index>[0]
 // - Request, Cancel: <index>[0], <begin>[1], <length>[2]
-func (p *Peer) Send(messageId MessageId, input ...int) error {
+func (p *Peer) Send(messageId MessageId, input ...uint32) error {
 	var data []byte
 	id := byte(messageId)
 
@@ -267,7 +267,7 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		data = make([]byte, 4+lenPrefix)
 
 		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
-		binary.BigEndian.PutUint32(data[5:], uint32(input[0]))
+		binary.BigEndian.PutUint32(data[5:], input[0])
 	case Request, Cancel:
 		// Format: 	<lenPrefix=000(13)><id=X><index(4B)><begin(4B)><length(4B)>
 		if len(input) != 3 {
@@ -280,15 +280,12 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		data = make([]byte, 4+lenPrefix)
 
 		copy(data, []byte{0, 0, 0, byte(lenPrefix), id})
-		binary.BigEndian.PutUint32(data[5:9], uint32(input[0]))  // index
-		binary.BigEndian.PutUint32(data[9:13], uint32(input[1])) // begin
-		binary.BigEndian.PutUint32(data[13:], uint32(input[2]))  // length
+		binary.BigEndian.PutUint32(data[5:9], input[0])  // index
+		binary.BigEndian.PutUint32(data[9:13], input[1]) // begin
+		binary.BigEndian.PutUint32(data[13:], input[2])  // length
 	default:
 		return fmt.Errorf("unexpected message id \"%d\"", messageId)
 	}
-
-	logger.Log(logger.High, "Sent to %s - len: %d, id: %s",
-		p.Connection.RemoteAddr(), len(data), messageId.String())
 
 	n, err := p.Connection.Write(data)
 	if err != nil {
@@ -297,6 +294,9 @@ func (p *Peer) Send(messageId MessageId, input ...int) error {
 		return fmt.Errorf("unable to send \"%s\" message to remote host %s",
 			messageId.String(), p.Connection.RemoteAddr().String())
 	}
+
+	logger.Log(logger.High, "Sent to %s - len: %d, id: %s",
+		p.Connection.RemoteAddr(), len(data), messageId.String())
 
 	return nil
 }
@@ -314,9 +314,6 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 	data = append(data, []byte{0, 0, 0, byte(lenPrefix), id}...)
 	data = append(data, payload...)
 
-	logger.Log(logger.High, "Sent data to %s: - len: %d, id: %s",
-		p.Connection.RemoteAddr(), len(data), messageId.String())
-
 	n, err := p.Connection.Write(data)
 	if err != nil {
 		return err
@@ -324,6 +321,9 @@ func (p *Peer) SendData(messageId MessageId, payload []byte) error {
 		return fmt.Errorf("unable to send \"%s\" message to remote host %s",
 			messageId.String(), p.Connection.RemoteAddr().String())
 	}
+
+	logger.Log(logger.High, "Sent data to %s: - len: %d, id: %s",
+		p.Connection.RemoteAddr(), len(data), messageId.String())
 
 	return nil
 }
