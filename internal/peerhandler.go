@@ -24,7 +24,7 @@ func PeerHandler(comTorrentHandler com.Channel, peer *torrent.Peer, tor *torrent
 
 	// Peer handshake. This handler will kill itself if it isn't able to
 	// complete the handshake.
-	conn, err := peer.Handshake(cons.PeerId, tor.Tracker.InfoHash)
+	conn, err := peer.Handshake(tor.Tracker.InfoHash, cons.PeerId)
 	if err != nil {
 		logger.Log(logger.High, "PeerHandler handshake failure!: %w", err)
 		comTorrentHandler.SendParentError(com.TotalFailure, err)
