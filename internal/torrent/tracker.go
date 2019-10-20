@@ -7,12 +7,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/jackpal/bencode-go"
 	"github.com/jmatss/torc/internal/peer"
 )
 
@@ -60,38 +58,32 @@ type Tracker struct {
 	Interval int64
 	Seeders  int64 `bencode:"complete"`
 	Leechers int64 `bencode:"incomplete"`
-	Peers    []peer.Peer
+	Peers    map[string]*peer.Peer
 }
 
 // Creates a new tracker struct that will contain anything tracker related
 // including all peers.
-func NewTracker(tor *Torrent, file *os.File) error {
+func NewTracker(content []byte, tor *Torrent) error {
 	tracker := Tracker{}
-
-	content, err := ioutil.ReadAll(file)
-	if err != nil {
-		return fmt.Errorf("unable to read from torrent file %s: %w",
-			file.Name(), err)
-	}
 
 	// Get "info" field from the bencoded torrent
 	// and sha1 hash it into tracker.InfoHash.
-	info, err := getValue(content, "info")
+	info, err := GetDictValue(content, "info")
 	if err != nil {
 		return fmt.Errorf("unable to get field \"info\" from "+
-			"torrent file %s: %w", file.Name(), err)
+			"torrent file: %w", err)
 	}
 	tracker.InfoHash = sha1.Sum(info)
 
 	var left int64 = 0
-	for _, file := range tor.Info.Files {
+	for _, file := range tor.Files {
 		left += file.Length
 	}
 	tracker.Left = left
 
 	// Pieces will be divisible by 20 (sha1.Size)
 	// Bitfield initialized to all zeros
-	bitFieldLength := ((len(tor.Info.Pieces) / sha1.Size) / 8) + 1
+	bitFieldLength := ((len(tor.Pieces) / sha1.Size) / 8) + 1
 	tracker.BitFieldHave = make([]byte, bitFieldLength)
 	tracker.BitFieldDownloading = make([]byte, bitFieldLength)
 	for i := 0; i < bitFieldLength; i++ {
@@ -184,23 +176,36 @@ func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 		return fmt.Errorf("unable to read response from %s: %w", URL, err)
 	}
 
-	reason, failure, err := getValueString(body, "failure reason")
-	if err != nil {
-		return fmt.Errorf("error while trying to decode "+
-			"failure reason from tracker request: %w", err)
-	} else if failure {
-		return fmt.Errorf("received failure from tracker request: %s", reason)
+	// If the response body contains the key "failure reason", the tracker request failed.
+	if bytes.Contains(body, []byte("failure reason")) {
+		reason, err := GetString(body, "failure reason")
+		if err != nil {
+			return err
+		} else {
+			return fmt.Errorf("received failure reason from remote peer: %s", reason)
+		}
 	}
 
+	// TODO: uglier code while using interfaces and casting over and over again,
+	//  but would be better performance compared to current code using bytes and
+	//  looking through the bytes in linear time.
 	// Get interval, seeders(complete) and leechers(incomplete) from the tracker response
-	err = bencode.Unmarshal(bytes.NewReader(body), &t.Tracker)
+	interval, err := GetInt(body, "interval")
 	if err != nil {
-		return fmt.Errorf("unable to unmarshal the response body into "+
-			"the tracker struct: %w", err)
-	} else if t.Tracker.Interval <= 0 {
-		return fmt.Errorf("received tracker response has interval time "+
-			"less than or equal zero", err)
+		return err
 	}
+	seeders, err := GetInt(body, "complete")
+	if err != nil {
+		return err
+	}
+	leechers, err := GetInt(body, "incomplete")
+	if err != nil {
+		return err
+	}
+
+	t.Tracker.Interval = interval
+	t.Tracker.Seeders = seeders
+	t.Tracker.Leechers = leechers
 
 	peers, err := getPeers(body)
 	if err != nil {
@@ -209,22 +214,13 @@ func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 
 	// If true: first "contact" with the tracker, i.e. all received peers are new,
 	//	        add all of them to the the tracker struct.
-	// Else: append all new peers that doesn't already exist in the "old" peers
+	// Else: add all new peers that isn't already among the "old" peers
 	if t.Tracker.Peers == nil {
 		t.Tracker.Peers = peers
 	} else {
-		var alreadyExists bool
 		for _, newPeer := range peers {
-			alreadyExists = false
-			for _, oldPeer := range t.Tracker.Peers {
-				if oldPeer.Equal(&newPeer) {
-					alreadyExists = true
-					break
-				}
-			}
-
-			if !alreadyExists {
-				t.Tracker.Peers = append(t.Tracker.Peers, newPeer)
+			if _, ok := t.Tracker.Peers[newPeer.HostAndPort]; !ok {
+				t.Tracker.Peers[newPeer.HostAndPort] = newPeer
 			}
 		}
 	}

@@ -39,11 +39,15 @@ func Handler(comController com.Channel, tor *Torrent) {
 	// Start up peerHandlers. Every peer handler will be in charge of one peer
 	// of this torrent.
 	comPeerHandler := com.New()
-	for i := 0; i < len(tor.Tracker.Peers); i++ {
-		if i >= MaxPeers {
-			break
+	{
+		i := 0
+		for _, val := range tor.Tracker.Peers {
+			if i >= MaxPeers {
+				break
+			}
+			go peer.Handler(comPeerHandler, val, tor)
+			i++
 		}
-		go peer.Handler(comPeerHandler, &tor.Tracker.Peers[i], tor)
 	}
 
 	retryCount := 0
@@ -69,11 +73,13 @@ func Handler(comController com.Channel, tor *Torrent) {
 							"still running", count),
 					)
 				} else {
-					for i, p := range tor.Tracker.Peers {
+					i := 0
+					for _, val := range tor.Tracker.Peers {
 						if i >= MaxPeers {
 							break
 						}
-						go peer.Handler(comPeerHandler, &p, tor)
+						go peer.Handler(comPeerHandler, val, tor)
+						i++
 					}
 					comController.SendParent(received.Id, nil, nil, nil, childId)
 				}
@@ -104,11 +110,10 @@ func Handler(comController com.Channel, tor *Torrent) {
 
 			case com.TotalFailure:
 				// The peerHandler just died, try and add a new peer (might be the same peer)
-				// TODO: select peer in another way, this will always restart the same peer
-				//  either some sort of saved order or random
-				for i, p := range tor.Tracker.Peers {
-					if !comPeerHandler.Exists(p.HostAndPort) {
-						go peer.Handler(comPeerHandler, &tor.Tracker.Peers[i], tor)
+				// Is selected ~random (depends on the implementation of go's range loop)
+				for _, val := range tor.Tracker.Peers {
+					if !comPeerHandler.Exists(val.HostAndPort) {
+						go peer.Handler(comPeerHandler, val, tor)
 						break
 					}
 				}
@@ -122,6 +127,7 @@ func Handler(comController com.Channel, tor *Torrent) {
 			/*
 				Interval time expired. Send new tracker request to get updated information.
 			*/
+			// TODO: Start connection to peers if it is needed.
 
 			logger.Log(logger.High, "torrent.Handler interval timeout")
 
