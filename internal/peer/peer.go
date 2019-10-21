@@ -24,7 +24,7 @@ type Peer struct {
 	UsingIp     bool
 	Ip          net.IP
 	Hostname    string
-	Port        int64
+	Port        uint16
 	HostAndPort string
 
 	Connection     net.Conn
@@ -37,7 +37,7 @@ type Peer struct {
 }
 
 // Parameter ipString can be either IPv4, IPv6 or a hostname.
-func NewPeer(ipString string, port int64) *Peer {
+func NewPeer(ipString string, port uint16) *Peer {
 	peer := Peer{
 		Port: port,
 

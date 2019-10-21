@@ -32,7 +32,7 @@ func Decode(content []byte) (res interface{}, err error) {
 
 	switch content[0] {
 	case 'd':
-		result, err := GetDictValues(content)
+		result, err := GetDictInterfaces(content)
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +213,7 @@ func GetDictInterface(content []byte, key string) (interface{}, error) {
 
 // Fetches all key:value pairs from the bencoded dictionary inside "content"
 // and returns them as a map[string]interface{}.
-func GetDictValues(content []byte) (map[string]interface{}, error) {
+func GetDictInterfaces(content []byte) (map[string]interface{}, error) {
 	if len(content) < 3 {
 		return nil, fmt.Errorf("incorrect format of given content")
 	}
@@ -567,7 +567,7 @@ func getPeers(body []byte) (map[string]*peer.Peer, error) {
 			}
 
 			// Use the peers "host:port" as key in the map.
-			tmpPeer := peer.NewPeer(ipString, port)
+			tmpPeer := peer.NewPeer(ipString, uint16(port))
 			peers[tmpPeer.HostAndPort] = tmpPeer
 		}
 
@@ -607,7 +607,7 @@ func getPeers(body []byte) (map[string]*peer.Peer, error) {
 				)
 
 				portBytes := peersValue[currentIndex+(i*groupLen+4) : currentIndex+(i*groupLen+6)]
-				port := int64(binary.BigEndian.Uint16(portBytes))
+				port := binary.BigEndian.Uint16(portBytes)
 
 				// Use the peers "host:port" as key in the map.
 				tmpPeer := peer.NewPeer(ip.String(), port)
