@@ -56,8 +56,8 @@ type Tracker struct {
 	Completed bool
 
 	Interval int64
-	Seeders  int64 `bencode:"complete"`
-	Leechers int64 `bencode:"incomplete"`
+	Seeders  int64
+	Leechers int64
 	Peers    map[string]*peer.Peer
 }
 
@@ -81,15 +81,9 @@ func NewTracker(content []byte, tor *Torrent) error {
 	}
 	tracker.Left = left
 
-	// Pieces will be divisible by 20 (sha1.Size)
 	// Bitfield initialized to all zeros
-	bitFieldLength := ((len(tor.Pieces) / sha1.Size) / 8) + 1
-	tracker.BitFieldHave = make([]byte, bitFieldLength)
-	tracker.BitFieldDownloading = make([]byte, bitFieldLength)
-	for i := 0; i < bitFieldLength; i++ {
-		tracker.BitFieldHave[i] = 0
-		tracker.BitFieldDownloading[i] = 0
-	}
+	tracker.BitFieldHave = make([]byte, len(tor.Pieces))
+	tracker.BitFieldDownloading = make([]byte, len(tor.Pieces))
 
 	// Uploaded, Downloaded, Interval, Seeders and Leecehers initialized to 0
 	// Started and Completed initialized to false
@@ -202,6 +196,9 @@ func (t *Torrent) trackerRequest(peerId string, event EventId) error {
 	if err != nil {
 		return err
 	}
+
+	t.Tracker.Lock()
+	defer t.Tracker.Unlock()
 
 	t.Tracker.Interval = interval
 	t.Tracker.Seeders = seeders
