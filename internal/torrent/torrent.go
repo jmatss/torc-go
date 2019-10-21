@@ -31,11 +31,11 @@ type PieceHash [sha1.Size]byte
 // Keep single and multiple file mode in a similar struct where the length of
 // "Files" in single file mode is 1.
 type Torrent struct {
-	sync.RWMutex
-
 	Announce string
 	Tracker  Tracker
 
+	// Lock used when changing filename/moving the file.
+	mut sync.RWMutex
 	// Name is the "root" directory if this torrent contains multiple files or
 	// if this torrent contains a single file, Name will be equal Files.Path.
 	Name  string
@@ -43,7 +43,7 @@ type Torrent struct {
 
 	// Contains sha1 hashes corresponding to every piece.
 	Pieces      []PieceHash
-	PieceLength int64 `bencode:"Piece length"`
+	PieceLength int64
 }
 
 type Files struct {
@@ -135,21 +135,9 @@ func NewTorrent(filename string) (*Torrent, error) {
 //
 // Returns the amount of bytes written or an error.
 func (t *Torrent) WriteData(pieceData []byte) (int, error) {
-	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
-	begin := binary.BigEndian.Uint32(pieceData[4:8])
-	data := pieceData[8:]
-
-	if pieceIndex < 0 || pieceIndex >= uint32(len(t.Pieces)/sha1.Size) {
-		return 0, fmt.Errorf("PieceHash index is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Pieces)/sha1.Size, pieceIndex)
-	}
-	if begin < 0 || begin >= uint32(t.PieceLength) {
-		return 0, fmt.Errorf("begin is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", t.PieceLength, begin)
-	}
-	if len(data) > int(MaxRequestLength) {
-		return 0, fmt.Errorf("length is over MaxRequestLength: "+
-			"expected: <%d, got: %d", MaxRequestLength, len(data))
+	pieceIndex, begin, data, err := t.getPieceData(pieceData)
+	if err != nil {
+		return 0, err
 	}
 
 	t.Tracker.Lock()
@@ -220,22 +208,11 @@ func (t *Torrent) WriteData(pieceData []byte) (int, error) {
 //
 // Returns the data or an error.
 func (t *Torrent) ReadData(request []byte) ([]byte, error) {
-	pieceIndex := binary.BigEndian.Uint32(request[:4])
-	begin := binary.BigEndian.Uint32(request[4:8])
-	length := binary.BigEndian.Uint32(request[8:])
-
-	if pieceIndex <= 0 || pieceIndex >= uint32(len(t.Pieces)/sha1.Size) {
-		return nil, fmt.Errorf("PieceHash index is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Pieces)/sha1.Size, pieceIndex)
+	pieceIndex, begin, lengthData, err := t.getPieceData(request)
+	if err != nil {
+		return nil, err
 	}
-	if begin <= 0 || begin >= uint32(t.PieceLength) {
-		return nil, fmt.Errorf("begin is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", t.PieceLength, begin)
-	}
-	if length > MaxRequestLength {
-		return nil, fmt.Errorf("length is over MaxRequestLength: "+
-			"expected: <%d, got: %d", MaxRequestLength, length)
-	}
+	length := binary.BigEndian.Uint32(lengthData)
 
 	// The "real" index of the whole "byte stream" where the remote peer wants
 	// to start reading data at. The remote peer wants "length" bytes starting
@@ -286,6 +263,31 @@ func (t *Torrent) ReadData(request []byte) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+func (t *Torrent) getPieceData(pieceData []byte) (uint32, uint32, []byte, error) {
+	if len(pieceData) < 4+4 {
+		return 0, 0, nil, fmt.Errorf("pieceData to small, "+
+			"expected: >=8, got: %d", len(pieceData))
+	}
+	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
+	begin := binary.BigEndian.Uint32(pieceData[4:8])
+	data := pieceData[8:]
+
+	if pieceIndex < 0 || int(pieceIndex) >= len(t.Pieces) {
+		return 0, 0, nil, fmt.Errorf("PieceHash index is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Pieces), pieceIndex)
+	}
+	if begin < 0 || begin >= uint32(t.PieceLength) {
+		return 0, 0, nil, fmt.Errorf("begin is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", t.PieceLength, begin)
+	}
+	if len(data) > int(MaxRequestLength) {
+		return 0, 0, nil, fmt.Errorf("length is over MaxRequestLength: "+
+			"expected: <%d, got: %d", MaxRequestLength, len(data))
+	}
+
+	return pieceIndex, begin, data, nil
 }
 
 // Verifies the data received from the remote peer is the data that was requested.
