@@ -25,7 +25,7 @@ func main() {
 				received.Id.String(), received.Error, received.Child)
 			switch received.Id {
 			case com.List:
-				for i, file := range received.Torrent.Info.Files {
+				for i, file := range received.Torrent.Files {
 					log.Printf("file %d: %s\n", i, strings.Join(file.Path, "/"))
 				}
 				log.Printf("peers: %d\n", len(received.Torrent.Tracker.Peers))

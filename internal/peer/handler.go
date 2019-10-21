@@ -48,7 +48,7 @@ func Handler(comTorrentHandler com.Channel, p *Peer, tor *torrent.Torrent) {
 	p.Send(bt.UnChoke)
 
 	// RemoteBitField initialized to all zeros
-	bitFieldLength := ((len(tor.Info.Pieces) / sha1.Size) / 8) + 1
+	bitFieldLength := ((len(tor.Pieces) / sha1.Size) / 8) + 1
 	p.RemoteBitField = make([]byte, bitFieldLength)
 
 	/*
@@ -222,8 +222,8 @@ func downloadPiece(downloadChannel chan remoteDTO, t *torrent.Torrent, p *Peer) 
 	// The last piece will have a size less than t.Info.PieceLength, prevent overflow.
 	// If true:
 	//  this piece is the last piece, will have a size of less than "piece length"
-	pieceLength := t.Info.PieceLength
-	amountOfPieces := len(t.Info.Pieces) / sha1.Size
+	pieceLength := t.PieceLength
+	amountOfPieces := len(t.Pieces) / sha1.Size
 	if pieceIndex == uint32(amountOfPieces-1) {
 		pieceLength = t.Tracker.Left
 	}
@@ -304,7 +304,7 @@ func findFreePieceIndex(t *torrent.Torrent, p *Peer) (uint32, error) {
 	p.Lock()
 	defer p.Unlock()
 
-	amountOfPieces := len(t.Info.Pieces) / sha1.Size
+	amountOfPieces := len(t.Pieces) / sha1.Size
 
 	for i := 0; i < amountOfPieces; i++ {
 		byteIndex := i / 8

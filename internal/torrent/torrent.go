@@ -4,11 +4,12 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
-	"github.com/jackpal/bencode-go"
 	"github.com/jmatss/torc/internal/util/cons"
 	"github.com/jmatss/torc/internal/util/logger"
 )
@@ -22,25 +23,34 @@ const (
 	MaxRequestLength uint32 = 1 << 14
 )
 
+type PieceHash [sha1.Size]byte
+
 // See https://wiki.theory.org/index.php/BitTorrentSpecification#Metainfo_File_Structure
-// for contents of torrent file. This torrent struct only contains required fields.
+// for contents of torrent file.
+//
+// Keep single and multiple file mode in a similar struct where the length of
+// "Files" in single file mode is 1.
 type Torrent struct {
 	Announce string
-	Info     Info
 	Tracker  Tracker
-}
 
-// Keep single and multiple file mode in a similar struct where the length of
-// "Files" in single file mode is 1
-type Info struct {
-	PieceLength int64  `bencode:"piece length"`
-	Pieces      string // Will consist of multiple 20-byte sha1 Pieces, might be better to split into slices
-	Name        string // Is ignored; "path" in "Files" is used instead.
-	Files       []Files
+	// Lock used when changing filename/moving the file.
+	mut sync.RWMutex
+	// Name is the "root" directory if this torrent contains multiple files or
+	// if this torrent contains a single file, Name will be equal Files.Path.
+	Name  string
+	Files []Files
+
+	// Contains sha1 hashes corresponding to every piece.
+	Pieces      []PieceHash
+	PieceLength int64
 }
 
 type Files struct {
-	// Index is the start index of this file in the whole "byte stream".
+	// Index is the start index of this file in the whole "byte stream" in bytes.
+	//
+	//  For example if a torrent contains two files with size 16 Byte.
+	//  The first file will have Index = 0, and the second index = 16.
 	Index  int64
 	Length int64
 	Path   []string
@@ -50,7 +60,6 @@ type Files struct {
 func NewTorrent(filename string) (*Torrent, error) {
 	filename = filepath.FromSlash(filename)
 
-	// see if file exists
 	fileStat, err := os.Stat(filename)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get stat of %s: %w", filename, err)
@@ -64,63 +73,81 @@ func NewTorrent(filename string) (*Torrent, error) {
 	}
 	defer file.Close()
 
-	torrent := &Torrent{}
-	err = bencode.Unmarshal(file, torrent)
+	content, err := ioutil.ReadAll(file)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create new torrent: %w", err)
-	} else if torrent.Info.PieceLength == 0 {
-		return nil, fmt.Errorf("unable to parse piece length from torrent: %w", err)
-	} else if torrent.Info.Pieces == "" || len(torrent.Info.Pieces)%sha1.Size != 0 {
-		return nil, fmt.Errorf("unable to parse pieces from torrent: %w", err)
+		return nil, fmt.Errorf("unable to read from torrent file %s: %w",
+			file.Name(), err)
 	}
 
-	// Get data from the "files" field from the torrent file.
-	file.Seek(0, 0)
-	files, err := getFiles(file)
+	announce, err := GetString(content, "announce")
+	if err != nil {
+		return nil, err
+	} else if announce == "" {
+		return nil, fmt.Errorf("unable to parse \"announce\" from torrent: %w", err)
+	}
+
+	piecesString, err := GetString(content, "pieces")
+	if err != nil {
+		return nil, err
+	} else if piecesString == "" || len(piecesString)%sha1.Size != 0 {
+		return nil, fmt.Errorf("unable to parse \"pieces\" from torrent: %w", err)
+	}
+
+	// Turn the received pieces string into slices of PieceHash ([sha1.Size]byte).
+	// Will be faster/easier to access them later on.
+	// TODO: possible to bypass need for copy?
+	amountOfPieces := len(piecesString) / sha1.Size
+	pieces := make([]PieceHash, 0, amountOfPieces)
+	piecesSlice := []byte(piecesString)
+	for i := 0; i < amountOfPieces; i++ {
+		copy(pieces[i][:], piecesSlice[i*sha1.Size:i*sha1.Size+sha1.Size])
+	}
+
+	pieceLength, err := GetInt(content, "piece length")
+	if err != nil {
+		return nil, err
+	} else if pieceLength == 0 {
+		return nil, fmt.Errorf("unable to parse \"piece length\" from torrent: %w", err)
+	}
+
+	files, err := GetFiles(content)
 	if err != nil {
 		return nil, err
 	}
-	torrent.Info.Files = files
 
-	file.Seek(0, 0)
-	err = NewTracker(torrent, file)
+	t := &Torrent{
+		Announce:    announce,
+		Pieces:      pieces,
+		PieceLength: pieceLength,
+		Files:       files,
+	}
+
+	err = NewTracker(content, t)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create tracker for torrent: %w", err)
 	}
 
-	return torrent, nil
+	return t, nil
 }
 
-// Writes the data received in the "piece" message to files.
-// Takes the data part of an "piece" message as input.
+// Writes the data received in the "PieceHash" message to files.
+// Takes the data part of an "PieceHash" message as input.
 //
 // Returns the amount of bytes written or an error.
 func (t *Torrent) WriteData(pieceData []byte) (int, error) {
-	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
-	begin := binary.BigEndian.Uint32(pieceData[4:8])
-	data := pieceData[8:]
-
-	if pieceIndex < 0 || pieceIndex >= uint32(len(t.Info.Pieces)/sha1.Size) {
-		return 0, fmt.Errorf("piece index is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/sha1.Size, pieceIndex)
-	}
-	if begin < 0 || begin >= uint32(t.Info.PieceLength) {
-		return 0, fmt.Errorf("begin is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", t.Info.PieceLength, begin)
-	}
-	if len(data) > int(MaxRequestLength) {
-		return 0, fmt.Errorf("length is over MaxRequestLength: "+
-			"expected: <%d, got: %d", MaxRequestLength, len(data))
+	pieceIndex, begin, data, err := t.getPieceData(pieceData)
+	if err != nil {
+		return 0, err
 	}
 
 	t.Tracker.Lock()
 	defer t.Tracker.Unlock()
 
 	// The "real" index of the whole "byte stream".
-	requestIndex := int64(pieceIndex)*t.Info.PieceLength + int64(begin)
+	requestIndex := int64(pieceIndex)*t.PieceLength + int64(begin)
 	var off int64 = 0
 
-	for _, file := range t.Info.Files {
+	for _, file := range t.Files {
 		// Skip files that have an index less than the requested start index.
 		if requestIndex < file.Index {
 			continue
@@ -181,31 +208,20 @@ func (t *Torrent) WriteData(pieceData []byte) (int, error) {
 //
 // Returns the data or an error.
 func (t *Torrent) ReadData(request []byte) ([]byte, error) {
-	pieceIndex := binary.BigEndian.Uint32(request[:4])
-	begin := binary.BigEndian.Uint32(request[4:8])
-	length := binary.BigEndian.Uint32(request[8:])
-
-	if pieceIndex <= 0 || pieceIndex >= uint32(len(t.Info.Pieces)/sha1.Size) {
-		return nil, fmt.Errorf("piece index is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Info.Pieces)/sha1.Size, pieceIndex)
+	pieceIndex, begin, lengthData, err := t.getPieceData(request)
+	if err != nil {
+		return nil, err
 	}
-	if begin <= 0 || begin >= uint32(t.Info.PieceLength) {
-		return nil, fmt.Errorf("begin is incorrect: "+
-			"expected: %d >= pieceIndex >= 0, got: %d", t.Info.PieceLength, begin)
-	}
-	if length > MaxRequestLength {
-		return nil, fmt.Errorf("length is over MaxRequestLength: "+
-			"expected: <%d, got: %d", MaxRequestLength, length)
-	}
+	length := binary.BigEndian.Uint32(lengthData)
 
 	// The "real" index of the whole "byte stream" where the remote peer wants
 	// to start reading data at. The remote peer wants "length" bytes starting
 	// from this index.
-	requestIndex := int64(pieceIndex)*t.Info.PieceLength + int64(begin)
+	requestIndex := int64(pieceIndex)*t.PieceLength + int64(begin)
 	data := make([]byte, length)
 	dataBuffer := data
 
-	for _, file := range t.Info.Files {
+	for _, file := range t.Files {
 		// Skip files that have an index less than the requested start index.
 		if requestIndex < file.Index {
 			continue
@@ -249,15 +265,40 @@ func (t *Torrent) ReadData(request []byte) ([]byte, error) {
 	return data, nil
 }
 
+func (t *Torrent) getPieceData(pieceData []byte) (uint32, uint32, []byte, error) {
+	if len(pieceData) < 4+4 {
+		return 0, 0, nil, fmt.Errorf("pieceData to small, "+
+			"expected: >=8, got: %d", len(pieceData))
+	}
+	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
+	begin := binary.BigEndian.Uint32(pieceData[4:8])
+	data := pieceData[8:]
+
+	if pieceIndex < 0 || int(pieceIndex) >= len(t.Pieces) {
+		return 0, 0, nil, fmt.Errorf("PieceHash index is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", len(t.Pieces), pieceIndex)
+	}
+	if begin < 0 || begin >= uint32(t.PieceLength) {
+		return 0, 0, nil, fmt.Errorf("begin is incorrect: "+
+			"expected: %d >= pieceIndex >= 0, got: %d", t.PieceLength, begin)
+	}
+	if len(data) > int(MaxRequestLength) {
+		return 0, 0, nil, fmt.Errorf("length is over MaxRequestLength: "+
+			"expected: <%d, got: %d", MaxRequestLength, len(data))
+	}
+
+	return pieceIndex, begin, data, nil
+}
+
 // Verifies the data received from the remote peer is the data that was requested.
 // Compares the sha1 hash of the received data to the sha1 given from the tracker.
 func (t *Torrent) IsCorrectPiece(pieceData []byte) bool {
 	pieceIndex := binary.BigEndian.Uint32(pieceData[:4])
 
 	receivedHash := sha1.Sum(pieceData)
-	realHash := t.Info.Pieces[pieceIndex*sha1.Size : pieceIndex*sha1.Size+sha1.Size]
+	realHash := t.Pieces[pieceIndex]
 
-	if string(receivedHash[:]) == realHash {
+	if receivedHash == realHash {
 		return true
 	} else {
 		return false
