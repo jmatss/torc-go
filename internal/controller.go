@@ -61,7 +61,7 @@ func Controller(comView com.Channel, childId string) {
 				if ok := comTorrentHandler.SendChild(received.Id, nil, nil, nil, childId); !ok {
 					comView.SendParentError(
 						com.Failure,
-						fmt.Errorf("tried to \"%s\" non existing torrent", received.Id),
+						fmt.Errorf("tried to \"%s\" non existing torrent", received.Id.String()),
 					)
 				}
 
