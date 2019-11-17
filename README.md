@@ -1,1 +1,1 @@
-A simple BitTorrent client (work in progress).
+A simple BitTorrent client.
