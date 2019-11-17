@@ -30,6 +30,16 @@ func Decode(content []byte) (res interface{}, err error) {
 			"expected: >2, got: %d", len(content))
 	}
 
+	// Might loop until end of "content" and get a index out of bounds if the
+	// list has incorrect format, recover if that is the case.
+	defer func() {
+		if r := recover(); r != nil {
+			res = nil
+			err = fmt.Errorf("unable to parse the list during decoding, "+
+				"the list never ended with an \"e\": %w", r.(error))
+		}
+	}()
+
 	switch content[0] {
 	case 'd':
 		result, err := GetDictInterfaces(content)
@@ -43,16 +53,6 @@ func Decode(content []byte) (res interface{}, err error) {
 		resultList := make([]interface{}, 0)
 		// Remove starting "l" and ending "e".
 		content := content[1 : len(content)-1]
-
-		// Might loop until end of "content" and get a index out of bounds if the
-		// list has incorrect format, recover if that is the case.
-		defer func() {
-			if r := recover(); r != nil {
-				res = nil
-				err = fmt.Errorf("unable to parse a list during decoding, "+
-					"the list never ended with an \"e\": %w", r.(error))
-			}
-		}()
 
 		for {
 			resultBytes, err := GetNext(content)
